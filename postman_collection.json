@@ -1,0 +1,204 @@
+{
+  "info": {
+    "_postman_id": "b0f5c1d6-4a1a-4f31-9b5d-3c9a2c5a7a11",
+    "name": "Mini Banking Platform (Go) - API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Auth - Register",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"newuser@test.com\",\n  \"password\": \"password123\",\n  \"first_name\": \"New\",\n  \"last_name\": \"User\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/register",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "register"]
+        }
+      }
+    },
+    {
+      "name": "Auth - Login (sets tokens)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "if (json && json.access_token) pm.environment.set('access_token', json.access_token);",
+              "if (json && json.refresh_token) pm.environment.set('refresh_token', json.refresh_token);",
+              "pm.test('has access_token', function () { pm.expect(json.access_token).to.be.a('string'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"user1@test.com\",\n  \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/login",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "Auth - Me",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": {
+          "raw": "{{base_url}}/auth/me",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "me"]
+        }
+      }
+    },
+    {
+      "name": "Auth - Refresh (sets tokens)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const json = pm.response.json();",
+              "if (json && json.access_token) pm.environment.set('access_token', json.access_token);",
+              "if (json && json.refresh_token) pm.environment.set('refresh_token', json.refresh_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/refresh",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "refresh"]
+        }
+      }
+    },
+    {
+      "name": "Auth - Logout",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"access_token\": \"{{access_token}}\",\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/auth/logout",
+          "host": ["{{base_url}}"],
+          "path": ["auth", "logout"]
+        }
+      }
+    },
+    {
+      "name": "Accounts - List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": {
+          "raw": "{{base_url}}/accounts",
+          "host": ["{{base_url}}"],
+          "path": ["accounts"]
+        }
+      }
+    },
+    {
+      "name": "Accounts - Balance",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": {
+          "raw": "{{base_url}}/accounts/{{account_id}}/balance",
+          "host": ["{{base_url}}"],
+          "path": ["accounts", "{{account_id}}", "balance"]
+        }
+      }
+    },
+    {
+      "name": "Transactions - Transfer",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"to_user_id\": \"{{user2_id}}\",\n  \"currency\": \"USD\",\n  \"amount\": 50.00\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/transactions/transfer",
+          "host": ["{{base_url}}"],
+          "path": ["transactions", "transfer"]
+        }
+      }
+    },
+    {
+      "name": "Transactions - Exchange",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"from_currency\": \"USD\",\n  \"to_currency\": \"EUR\",\n  \"amount\": 100.00\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/transactions/exchange",
+          "host": ["{{base_url}}"],
+          "path": ["transactions", "exchange"]
+        }
+      }
+    },
+    {
+      "name": "Transactions - List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+        "url": {
+          "raw": "{{base_url}}/transactions?type=transfer&page=1&limit=10",
+          "host": ["{{base_url}}"],
+          "path": ["transactions"],
+          "query": [
+            { "key": "type", "value": "transfer" },
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "10" }
+          ]
+        }
+      }
+    }
+  ]
+}
+
