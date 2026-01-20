@@ -38,15 +38,15 @@ func (h *TransactionHandler) Transfer(c *gin.Context) {
 
 	var req model.TransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 	if (req.ToUserID == nil) == (req.ToUserEmail == nil) {
-		respondWithError(c, "Either to_user_id or to_user_email must be provided", http.StatusBadRequest)
+		respondWithJSON(c, http.StatusBadRequest, gin.H{"error": "validation_error", "fields": []validationFieldError{{Field: "to_user_id", Message: "provide either to_user_id or to_user_email"}, {Field: "to_user_email", Message: "provide either to_user_id or to_user_email"}}})
 		return
 	}
 	if req.ToUserEmail != nil && strings.TrimSpace(*req.ToUserEmail) == "" {
-		respondWithError(c, "to_user_email cannot be empty", http.StatusBadRequest)
+		respondWithJSON(c, http.StatusBadRequest, gin.H{"error": "validation_error", "fields": []validationFieldError{{Field: "to_user_email", Message: "cannot be empty"}}})
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *TransactionHandler) Exchange(c *gin.Context) {
 
 	var req model.ExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 

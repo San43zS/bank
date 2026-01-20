@@ -24,7 +24,7 @@ func NewAuthHandler(authService service.IAuthService) *AuthHandler {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req model.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 
@@ -45,7 +45,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req model.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req model.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req model.LogoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		respondWithBindError(c, err)
 		return
 	}
 
