@@ -34,11 +34,11 @@ func startConsistencyCron(cfg *config.Config, logger *slog.Logger, checker *serv
 			logger.Error("Ledger consistency check failed", "error", err)
 		}
 
-		runCtx2, runCancel2 := context.WithTimeout(ctx, timeout)
-		err2 := checker.CheckAccountBalanceConsistency(runCtx2, 100)
-		runCancel2()
-		if err2 != nil {
-			logger.Error("Account balance consistency check failed", "error", err2)
+		runCtxConsis, runCancelConsis := context.WithTimeout(ctx, timeout)
+		errConsis := checker.CheckAccountBalanceConsistency(runCtxConsis, 100)
+		runCancelConsis()
+		if errConsis != nil {
+			logger.Error("Account balance consistency check failed", "error", errConsis)
 		}
 	}
 

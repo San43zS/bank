@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"banking-platform/internal/apperr"
@@ -45,7 +46,30 @@ func NewTransactionService(
 }
 
 func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID, req *model.TransferRequest) (*model.TransactionResponse, error) {
-	s.logger.Info("Processing transfer", "from_user_id", fromUserID, "to_user_id", req.ToUserID, "amount", req.Amount, "currency", req.Currency)
+	var toUserID uuid.UUID
+	if req.ToUserID != nil && req.ToUserEmail != nil {
+		return nil, fmt.Errorf("provide either to_user_id or to_user_email")
+	}
+	if req.ToUserID != nil {
+		toUserID = *req.ToUserID
+	} else if req.ToUserEmail != nil {
+		email := strings.ToLower(strings.TrimSpace(*req.ToUserEmail))
+		if email == "" {
+			return nil, fmt.Errorf("to_user_email cannot be empty")
+		}
+		u, err := s.userRepo.GetByEmail(email)
+		if err != nil {
+			return nil, fmt.Errorf("recipient not found")
+		}
+		toUserID = u.ID
+	} else {
+		return nil, fmt.Errorf("recipient is required")
+	}
+	if toUserID == fromUserID {
+		return nil, fmt.Errorf("cannot transfer to self")
+	}
+
+	s.logger.Info("Processing transfer", "from_user_id", fromUserID, "to_user_id", toUserID, "amount", req.Amount, "currency", req.Currency)
 
 	if req.Currency != model.CurrencyUSD && req.Currency != model.CurrencyEUR {
 		s.logger.Warn("Invalid currency", "currency", req.Currency)
@@ -68,7 +92,7 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sender account: %w", err)
 	}
-	toAccountID, err := s.accountRepo.FindAccountIDTx(tx, req.ToUserID, req.Currency)
+	toAccountID, err := s.accountRepo.FindAccountIDTx(tx, toUserID, req.Currency)
 	if err != nil {
 		return nil, fmt.Errorf("account not found: %w", err)
 	}
@@ -91,7 +115,7 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID,
 		return nil, fmt.Errorf("failed to lock accounts")
 	}
 
-	if fromAccount.UserID != fromUserID || toAccount.UserID != req.ToUserID {
+	if fromAccount.UserID != fromUserID || toAccount.UserID != toUserID {
 		return nil, apperr.ErrUnauthorized
 	}
 
@@ -119,7 +143,7 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID,
 		ToAccountID:   toAccount.ID,
 		Amount:        amountFloat,
 		Currency:      req.Currency,
-		Description:   fmt.Sprintf("Transfer %s %.2f from %s to %s", req.Currency, amountFloat, fromUserID, req.ToUserID),
+		Description:   fmt.Sprintf("Transfer %s %.2f from %s to %s", req.Currency, amountFloat, fromUserID, toUserID),
 		CreatedAt:     now,
 	}
 
@@ -169,10 +193,10 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID,
 		s.logger.Error("Failed to commit transfer transaction", "error", err, "transaction_id", transactionID)
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	s.logger.Info("Transfer completed successfully", "transaction_id", transactionID, "from_user_id", fromUserID, "to_user_id", req.ToUserID, "amount", amountFloat, "currency", req.Currency)
+	s.logger.Info("Transfer completed successfully", "transaction_id", transactionID, "from_user_id", fromUserID, "to_user_id", toUserID, "amount", amountFloat, "currency", req.Currency)
 
 	fromUser, _ := s.userRepo.GetByID(fromUserID)
-	toUser, _ := s.userRepo.GetByID(req.ToUserID)
+	toUser, _ := s.userRepo.GetByID(toUserID)
 
 	response := &model.TransactionResponse{
 		ID:            transaction.ID,

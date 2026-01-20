@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"banking-platform/internal/apperr"
 	"banking-platform/internal/model"
@@ -38,6 +39,14 @@ func (h *TransactionHandler) Transfer(c *gin.Context) {
 	var req model.TransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithError(c, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if (req.ToUserID == nil) == (req.ToUserEmail == nil) {
+		respondWithError(c, "Either to_user_id or to_user_email must be provided", http.StatusBadRequest)
+		return
+	}
+	if req.ToUserEmail != nil && strings.TrimSpace(*req.ToUserEmail) == "" {
+		respondWithError(c, "to_user_email cannot be empty", http.StatusBadRequest)
 		return
 	}
 
