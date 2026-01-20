@@ -45,10 +45,10 @@ func Load() (*Config, error) {
 		Port:       getEnv("PORT", "8080"),
 
 		ConsistencyCronEnabled:  getEnvBool("CONSISTENCY_CRON_ENABLED", false),
-		ConsistencyCronInterval: getEnvDurationSeconds("CONSISTENCY_CRON_INTERVAL_SECONDS", 300),
-		ConsistencyCronTimeout:  getEnvDurationSeconds("CONSISTENCY_CRON_TIMEOUT_SECONDS", 30),
-		CronStopTimeout:         getEnvDurationSeconds("CRON_STOP_TIMEOUT_SECONDS", 5),
-		ShutdownTimeout:         getEnvDurationSeconds("SHUTDOWN_TIMEOUT_SECONDS", 10),
+		ConsistencyCronInterval: getEnvDurationSeconds("CONSISTENCY_CRON_INTERVAL_SECONDS", 10),
+		ConsistencyCronTimeout:  getEnvDurationSeconds("CONSISTENCY_CRON_TIMEOUT_SECONDS", 3),
+		CronStopTimeout:         getEnvDurationSeconds("CRON_STOP_TIMEOUT_SECONDS", 1),
+		ShutdownTimeout:         getEnvDurationSeconds("SHUTDOWN_TIMEOUT_SECONDS", 3),
 
 		RateLimitEnabled: getEnvBool("RATE_LIMIT_ENABLED", false),
 		RateLimitRPS:     getEnvInt("RATE_LIMIT_RPS", 10),

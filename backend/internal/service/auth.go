@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,9 @@ import (
 type AuthService struct {
 	userRepo         UserRepo
 	accountRepo      AccountRepo
+	txRunner         TxRunner
+	transactionRepo  TransactionRepo
+	ledgerRepo       LedgerRepo
 	refreshTokenRepo RefreshTokenRepo
 	tokenManager     *jwt.TokenManager
 	hasher           *hash.Hasher
@@ -29,6 +33,9 @@ type AuthService struct {
 func NewAuthService(
 	userRepo UserRepo,
 	accountRepo AccountRepo,
+	txRunner TxRunner,
+	transactionRepo TransactionRepo,
+	ledgerRepo LedgerRepo,
 	refreshTokenRepo RefreshTokenRepo,
 	tokenManager *jwt.TokenManager,
 	hasher *hash.Hasher,
@@ -37,6 +44,9 @@ func NewAuthService(
 	return &AuthService{
 		userRepo:         userRepo,
 		accountRepo:      accountRepo,
+		txRunner:         txRunner,
+		transactionRepo:  transactionRepo,
+		ledgerRepo:       ledgerRepo,
 		refreshTokenRepo: refreshTokenRepo,
 		tokenManager:     tokenManager,
 		hasher:           hasher,
@@ -80,9 +90,15 @@ func (s *AuthService) Register(ctx context.Context, in *domain.RegisterInput) (*
 		return nil, fmt.Errorf("auth.register: create user: %w", err)
 	}
 
-	if err := s.createDefaultAccounts(ctx, user.ID); err != nil {
+	usdAccount, eurAccount, err := s.createDefaultAccounts(ctx, user.ID)
+	if err != nil {
 		s.logger.Error("Failed to create default accounts", "error", err, "user_id", user.ID)
 		return nil, fmt.Errorf("auth.register: create default accounts: %w", err)
+	}
+
+	if err := s.fundInitialBalancesViaLedger(ctx, user.ID, usdAccount.ID, eurAccount.ID); err != nil {
+		s.logger.Error("Failed to fund initial balances via ledger", "error", err, "user_id", user.ID)
+		return nil, fmt.Errorf("auth.register: fund initial balances: %w", err)
 	}
 
 	tokenPair, err := s.generateTokenPair(ctx, user.ID)
@@ -146,36 +162,146 @@ func (s *AuthService) Login(ctx context.Context, in *domain.LoginInput) (*domain
 	}, nil
 }
 
-func (s *AuthService) createDefaultAccounts(ctx context.Context, userID uuid.UUID) error {
+func (s *AuthService) createDefaultAccounts(ctx context.Context, userID uuid.UUID) (*domain.Account, *domain.Account, error) {
 	now := time.Now()
 
 	usdAccount := &domain.Account{
 		ID:           uuid.New(),
 		UserID:       userID,
 		Currency:     domain.CurrencyUSD,
-		BalanceCents: 1000_00,
+		BalanceCents: 0,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	if err := s.accountRepo.Create(ctx, usdAccount); err != nil {
 		s.logger.Error("Failed to create USD account", "error", err, "user_id", userID)
-		return err
+		return nil, nil, err
 	}
 
 	eurAccount := &domain.Account{
 		ID:           uuid.New(),
 		UserID:       userID,
 		Currency:     domain.CurrencyEUR,
-		BalanceCents: 500_00,
+		BalanceCents: 0,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	if err := s.accountRepo.Create(ctx, eurAccount); err != nil {
 		s.logger.Error("Failed to create EUR account", "error", err, "user_id", userID)
-		return err
+		return nil, nil, err
 	}
 
 	s.logger.Info("Default accounts created", "user_id", userID)
+	return usdAccount, eurAccount, nil
+}
+
+func (s *AuthService) fundInitialBalancesViaLedger(ctx context.Context, userID uuid.UUID, userUSDAccountID uuid.UUID, userEURAccountID uuid.UUID) error {
+	const initialUSDCents int64 = 1000_00
+	const initialEURCents int64 = 500_00
+
+	return s.txRunner.WithTx(ctx, func(tx Tx) error {
+		bankUSDAccountID, err := s.accountRepo.FindAccountIDTx(ctx, tx, systemBankUserID, domain.CurrencyUSD)
+		if err != nil {
+			return fmt.Errorf("find bank USD account: %w", err)
+		}
+		bankEURAccountID, err := s.accountRepo.FindAccountIDTx(ctx, tx, systemBankUserID, domain.CurrencyEUR)
+		if err != nil {
+			return fmt.Errorf("find bank EUR account: %w", err)
+		}
+
+		if err := s.createFundingTransferTx(ctx, tx, bankUSDAccountID, userUSDAccountID, domain.CurrencyUSD, initialUSDCents, "Initial USD funding"); err != nil {
+			return fmt.Errorf("initial USD funding: %w", err)
+		}
+		if err := s.createFundingTransferTx(ctx, tx, bankEURAccountID, userEURAccountID, domain.CurrencyEUR, initialEURCents, "Initial EUR funding"); err != nil {
+			return fmt.Errorf("initial EUR funding: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *AuthService) createFundingTransferTx(ctx context.Context, tx Tx, fromAccountID uuid.UUID, toAccountID uuid.UUID, currency domain.Currency, amountCents int64, purpose string) error {
+	if amountCents <= 0 {
+		return apperr.BadRequest("amount must be greater than 0")
+	}
+
+	// Lock deterministically to reduce deadlock probability.
+	lockIDs := []uuid.UUID{fromAccountID, toAccountID}
+	sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i].String() < lockIDs[j].String() })
+
+	locked := make(map[uuid.UUID]*domain.Account, 2)
+	for _, id := range lockIDs {
+		acc, err := s.accountRepo.LockAccountForUpdate(ctx, tx, id)
+		if err != nil {
+			return fmt.Errorf("lock account: %w", err)
+		}
+		locked[id] = acc
+	}
+
+	fromAccount := locked[fromAccountID]
+	toAccount := locked[toAccountID]
+	if fromAccount == nil || toAccount == nil {
+		return fmt.Errorf("failed to lock accounts")
+	}
+	if fromAccount.Currency != currency || toAccount.Currency != currency {
+		return apperr.ErrInvalidCurrency
+	}
+	if fromAccount.BalanceCents < amountCents {
+		return apperr.ErrLiquidityUnavailable
+	}
+
+	transactionID := uuid.New()
+	createdAt := time.Now()
+	amountStr := domain.CentsToDecimalString(amountCents)
+	created := &domain.Transaction{
+		ID:            transactionID,
+		Type:          domain.TransactionTypeTransfer,
+		FromAccountID: &fromAccountID,
+		ToAccountID:   toAccountID,
+		AmountCents:   amountCents,
+		Currency:      currency,
+		Description:   fmt.Sprintf("%s: %s %s", purpose, currency, amountStr),
+		CreatedAt:     createdAt,
+	}
+
+	if err := s.transactionRepo.Create(ctx, tx, created); err != nil {
+		return fmt.Errorf("create transaction: %w", err)
+	}
+
+	fromEntry := &domain.LedgerEntry{
+		ID:            uuid.New(),
+		TransactionID: transactionID,
+		AccountID:     fromAccountID,
+		AmountCents:   -amountCents,
+		CreatedAt:     createdAt,
+	}
+	if err := s.ledgerRepo.CreateEntry(ctx, tx, fromEntry); err != nil {
+		return fmt.Errorf("create ledger entry (from): %w", err)
+	}
+	toEntry := &domain.LedgerEntry{
+		ID:            uuid.New(),
+		TransactionID: transactionID,
+		AccountID:     toAccountID,
+		AmountCents:   amountCents,
+		CreatedAt:     createdAt,
+	}
+	if err := s.ledgerRepo.CreateEntry(ctx, tx, toEntry); err != nil {
+		return fmt.Errorf("create ledger entry (to): %w", err)
+	}
+
+	if err := s.ledgerRepo.VerifyTransactionBalanceTx(ctx, tx, transactionID); err != nil {
+		return err
+	}
+
+	newFrom := fromAccount.BalanceCents - amountCents
+	newTo := toAccount.BalanceCents + amountCents
+
+	if err := s.accountRepo.UpdateBalanceString(ctx, tx, fromAccountID, domain.CentsToDecimalString(newFrom)); err != nil {
+		return fmt.Errorf("update from balance: %w", err)
+	}
+	if err := s.accountRepo.UpdateBalanceString(ctx, tx, toAccountID, domain.CentsToDecimalString(newTo)); err != nil {
+		return fmt.Errorf("update to balance: %w", err)
+	}
+
 	return nil
 }
 

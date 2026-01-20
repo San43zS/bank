@@ -53,6 +53,9 @@ func NewApp() (*App, error) {
 	authService := service.NewAuthService(
 		userRepo,
 		accountRepo,
+		db,
+		transactionRepo,
+		ledgerRepo,
 		refreshTokenRepo,
 		tokenManager,
 		hasher,
