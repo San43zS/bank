@@ -1,40 +1,56 @@
-# Mini Banking Platform (Go)
+# Mini Banking Platform
 
-Backend service for a mini banking platform (users, accounts, transfers, currency exchange) with PostgreSQL storage and SQL migrations.
+Repository structure:
+
+- `backend/` — Go backend + PostgreSQL migrations + OpenAPI
+- `frontend/` — React (Vite) UI
 
 ## Requirements
 
-- Go : Go 1.21+
-- Docker + Docker Compose 
+- Go 1.21+
+- Node.js 19+ (tested with Node 24)
+- Docker + Docker Compose
 
-## Quick start (Docker, recommended)
+## Quick start (Docker backend + local frontend)
 
-From the `technical task/` directory:
+### Backend
+
+From repo root:
 
 ```bash
+cd backend
 docker compose up --build
 ```
 
 This starts:
 - `postgres` on `localhost:5433`
-- `migrate` \(runs migrations automatically on startup\)
+- `migrate` (runs migrations on startup)
 - `api` on `localhost:8080`
 
 Stop everything:
 
 ```bash
+cd backend
 docker compose down
 ```
 
-Reset the database (removes the Docker volume):
+### Frontend
+
+From repo root:
 
 ```bash
-docker compose down -v
+cd frontend
+npm install
+npm run dev
 ```
 
-## Configuration (environment variables)
+The UI will be available at the Vite URL (usually `http://localhost:5173`).
 
-The service reads configuration from environment variables (optionally from a local `.env` file).
+## Configuration
+
+### Backend environment variables
+
+Backend reads configuration from env vars (optionally from a local `.env` file in `backend/`):
 
 - `DB_HOST` (default: `localhost`)
 - `DB_PORT` (default: `5433`)
@@ -46,162 +62,48 @@ The service reads configuration from environment variables (optionally from a lo
 - `CONSISTENCY_CRON_ENABLED` (default: `false`)
 - `CONSISTENCY_CRON_INTERVAL_SECONDS` (default: `300`)
 - `CONSISTENCY_CRON_TIMEOUT_SECONDS` (default: `30`)
+- `CRON_STOP_TIMEOUT_SECONDS` (default: `5`)
+- `SHUTDOWN_TIMEOUT_SECONDS` (default: `10`)
 - `RATE_LIMIT_ENABLED` (default: `false`)
 - `RATE_LIMIT_RPS` (default: `10`)
 - `RATE_LIMIT_BURST` (default: `20`)
 - `EXCHANGE_RATE_USD_TO_EUR` (default: `0.92`)
 
-## Migrations
+### Frontend environment variables
 
-### Run migrations via Docker (no local tools needed)
+Frontend uses Vite env var:
 
-```bash
-docker compose run --rm migrate
-```
+- `VITE_API_BASE_URL` (default: `http://localhost:8080`)
 
-### Run migrations locally (optional)
+Example file is in `frontend/env.example`.
 
-The `Makefile` uses `goose`. If you do not have it installed, install it using your OS package manager, or use the Docker command above.
+## API docs
 
-To apply migrations against the local Postgres started by compose (`localhost:5433`):
+- OpenAPI spec: `backend/docs/openapi.yaml`
+- How to view: `backend/docs/README.md`
 
-```bash
-make migrate-up
-```
+## Tests
 
-Other useful targets:
+Backend:
 
 ```bash
-make migrate-status
-make migrate-down
+cd backend
+go test ./...
 ```
 
-## Local development (without Docker for the API)
-
-1. Start Postgres:
+Frontend:
 
 ```bash
-docker compose up -d postgres
+cd frontend
+npm run build
 ```
-
-2. Run migrations:
-
-```bash
-docker compose run --rm migrate
-```
-
-3. Start the API:
-
-```bash
-go run ./cmd/app
-```
-
-The API will be available on `http://localhost:8080`.
-
-## API documentation
-
-### Authentication
-
-Protected endpoints require:
-
-```
-Authorization: Bearer <access_token>
-```
-
-### Error format
-
-Generic errors:
-
-```json
-{ "error": "message" }
-```
-
-Validation errors (bad request body / binding errors):
-
-```json
-{
-  "error": "validation_error",
-  "fields": [
-    { "field": "email", "message": "must be a valid email" }
-  ]
-}
-```
-
-Rate limit errors:
-
-```json
-{ "error": "rate_limited" }
-```
-
-### Endpoints
-
-- `POST /auth/register` — Register a new user.
-
-Request body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "password123",
-  "first_name": "John",
-  "last_name": "Doe"
-}
-```
-
-- `POST /auth/login` — Login and receive access/refresh tokens.
-
-Request body:
-
-```json
-{
-  "email": "user1@test.com",
-  "password": "password123"
-}
-```
-
-- `POST /auth/refresh` — Refresh access token using refresh token.
-- `POST /auth/logout` — Revoke refresh token.
-- `GET /auth/me` — Get current authenticated user info.
-- `GET /accounts` — List current user accounts.
-- `GET /accounts/:id/balance` — Get balance for a specific account.
-- `POST /transactions/transfer` — Transfer money to another user (by user ID or email).
-
-Request body (by user id):
-
-```json
-{
-  "to_user_id": "22222222-2222-2222-2222-222222222222",
-  "currency": "USD",
-  "amount_cents": 1025
-}
-```
-
-Request body (by email):
-
-```json
-{
-  "to_user_email": "user2@test.com",
-  "currency": "USD",
-  "amount_cents": 1025
-}
-```
-
-- `POST /transactions/exchange` — Exchange between USD/EUR using fixed rate.
-- `GET /transactions` — List current user transactions.
-- `GET /health` — Health check.
 
 ## Seeded test users (from migrations)
 
-After running migrations, the database is seeded with the following users:
+After running migrations, the database is seeded with:
 - `user1@test.com`
 - `user2@test.com`
 - `user3@test.com`
 
 Password: `password123`
-
-## Tests
-
-```bash
-go test ./...
-```
 
