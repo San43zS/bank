@@ -149,6 +149,11 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID,
 		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
 	}
 
+	if err := s.ledgerRepo.VerifyTransactionBalanceTx(tx, transactionID); err != nil {
+		s.logger.Error("Ledger not balanced (transfer)", "error", err, "transaction_id", transactionID)
+		return nil, err
+	}
+
 	newFromBalanceCents := fromBalanceCents - amountCents
 	newToBalanceCents := toBalanceCents + amountCents
 
@@ -344,6 +349,11 @@ func (s *TransactionService) Exchange(ctx context.Context, userID uuid.UUID, req
 	}
 	if err := s.ledgerRepo.CreateEntry(tx, toEntry); err != nil {
 		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
+	}
+
+	if err := s.ledgerRepo.VerifyTransactionBalanceTx(tx, transactionID); err != nil {
+		s.logger.Error("Ledger not balanced (exchange)", "error", err, "transaction_id", transactionID)
+		return nil, err
 	}
 
 	newFromBalanceCents := fromBalanceCents - amountCents

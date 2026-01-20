@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 
 	"banking-platform/internal/model"
 	"github.com/google/uuid"
@@ -52,9 +54,80 @@ func (r *LedgerRepository) GetByTransactionID(transactionID uuid.UUID) ([]*model
 	return entries, rows.Err()
 }
 
-func (r *LedgerRepository) VerifyTransactionBalance(transactionID uuid.UUID) (float64, error) {
+func (r *LedgerRepository) VerifyTransactionBalanceTx(tx *sql.Tx, transactionID uuid.UUID) error {
 	query := `SELECT COALESCE(SUM(amount), 0) FROM ledger WHERE transaction_id = $1`
 	var sum float64
-	err := r.db.GetDB().QueryRow(query, transactionID).Scan(&sum)
-	return sum, err
+	if err := tx.QueryRow(query, transactionID).Scan(&sum); err != nil {
+		return err
+	}
+
+	if sum > 0.000001 || sum < -0.000001 {
+		return fmt.Errorf("ledger not balanced for transaction %s: sum=%0.6f", transactionID.String(), sum)
+	}
+	return nil
+}
+
+func (r *LedgerRepository) FindUnbalancedTransactionIDs(ctx context.Context, limit int) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT transaction_id
+		FROM ledger
+		GROUP BY transaction_id
+		HAVING COALESCE(SUM(amount), 0) <> 0
+		ORDER BY transaction_id
+		LIMIT $1
+	`
+	rows, err := r.db.GetDB().QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (r *LedgerRepository) FindAccountBalanceMismatches(ctx context.Context, limit int) ([]*model.AccountBalanceMismatch, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `
+		SELECT
+			a.id,
+			a.user_id,
+			a.currency,
+			a.balance,
+			COALESCE(SUM(l.amount), 0) AS ledger_sum,
+			(a.balance - COALESCE(SUM(l.amount), 0)) AS diff
+		FROM accounts a
+		LEFT JOIN ledger l ON l.account_id = a.id
+		GROUP BY a.id, a.user_id, a.currency, a.balance
+		HAVING (a.balance - COALESCE(SUM(l.amount), 0)) <> 0
+		ORDER BY ABS(a.balance - COALESCE(SUM(l.amount), 0)) DESC
+		LIMIT $1
+	`
+	rows, err := r.db.GetDB().QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*model.AccountBalanceMismatch
+	for rows.Next() {
+		m := &model.AccountBalanceMismatch{}
+		if err := rows.Scan(&m.AccountID, &m.UserID, &m.Currency, &m.Balance, &m.LedgerSum, &m.Diff); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
