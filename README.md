@@ -4,8 +4,8 @@ Backend service for a mini banking platform (users, accounts, transfers, currenc
 
 ## Requirements
 
-- Go \(for local development\): Go 1.21+
-- Docker + Docker Compose \(recommended for running the full stack\)
+- Go : Go 1.21+
+- Docker + Docker Compose 
 
 ## Quick start (Docker, recommended)
 

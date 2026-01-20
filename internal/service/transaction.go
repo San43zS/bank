@@ -448,8 +448,7 @@ func (s *TransactionService) GetUserTransactions(ctx context.Context, userID uui
 
 func amountToCents(amount float64) (int64, error) {
 	cents := int64(amount*100 + 0.5)
-	if centsToFloat(cents) != float64(int64(amount*100+0.5))/100 {
-	}
+
 	scaled := amount * 100
 	nearest := float64(int64(scaled + 0.5))
 	if diff := scaled - nearest; diff > 1e-9 || diff < -1e-9 {

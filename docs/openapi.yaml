@@ -1,0 +1,615 @@
+openapi: 3.0.0
+info:
+  title: Mini Banking Platform API
+  version: "1.0.0"
+  description: |
+    Backend API for a mini banking platform (auth, accounts, transfers, currency exchange).
+
+servers:
+  - url: http://localhost:8080/
+    description: Local server
+
+tags:
+  - name: Health
+  - name: Auth
+  - name: Accounts
+  - name: Transactions
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation:
+                  value: { "error": "validation_error", "fields": [ { "field": "email", "message": "must be a valid email" } ] }
+                generic:
+                  value: { "error": "invalid request body" }
+        "409":
+          description: Conflict (user already exists)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive access/refresh tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized (invalid credentials)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token using refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized (invalid/expired refresh token)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke refresh token)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogoutRequest"
+      responses:
+        "200":
+          description: OK (no response body)
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user info
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /accounts:
+    get:
+      tags: [Accounts]
+      summary: List current user accounts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AccountResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /accounts/{id}/balance:
+    get:
+      tags: [Accounts]
+      summary: Get balance for a specific account
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Account UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /transactions/transfer:
+    post:
+      tags: [Transactions]
+      summary: Transfer money to another user (by user ID or email)
+      description: |
+        Provide exactly one of `to_user_id` or `to_user_email`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
+            examples:
+              byUserId:
+                value:
+                  to_user_id: "22222222-2222-2222-2222-222222222222"
+                  currency: "USD"
+                  amount: 10.25
+              byEmail:
+                value:
+                  to_user_email: "user2@test.com"
+                  currency: "USD"
+                  amount: 10.25
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionResponse"
+        "400":
+          description: Bad Request (validation, insufficient funds, invalid amount)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation:
+                  value: { "error": "validation_error", "fields": [ { "field": "amount", "message": "must be greater than 0" } ] }
+                insufficientFunds:
+                  value: { "error": "insufficient funds" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too Many Requests (rate limit)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example: { "error": "rate_limited" }
+
+  /transactions/exchange:
+    post:
+      tags: [Transactions]
+      summary: Exchange between USD/EUR using fixed rate
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangeRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionResponse"
+        "400":
+          description: Bad Request (validation, insufficient funds, same currency)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too Many Requests (rate limit)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /transactions:
+    get:
+      tags: [Transactions]
+      summary: List current user transactions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TransactionType"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 50
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TransactionResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      description: |
+        Generic error format used by the API.
+        Some validation errors additionally include `fields`.
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: invalid request body
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationFieldError"
+
+    ValidationFieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          example: email
+        message:
+          type: string
+          example: must be a valid email
+
+    Currency:
+      type: string
+      enum: [USD, EUR]
+
+    TransactionType:
+      type: string
+      enum: [transfer, exchange]
+
+    User:
+      type: object
+      required: [id, email, first_name, last_name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    RegisterRequest:
+      type: object
+      required: [email, password, first_name, last_name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+        first_name:
+          type: string
+        last_name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RefreshTokenRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    LogoutRequest:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+
+    AuthResponse:
+      type: object
+      required: [access_token, refresh_token, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        user:
+          $ref: "#/components/schemas/User"
+
+    AccountResponse:
+      type: object
+      required: [id, currency, balance]
+      properties:
+        id:
+          type: string
+          format: uuid
+        currency:
+          $ref: "#/components/schemas/Currency"
+        balance:
+          type: number
+          format: double
+
+    BalanceResponse:
+      type: object
+      required: [balance]
+      properties:
+        balance:
+          type: number
+          format: double
+
+    TransferRequest:
+      type: object
+      required: [currency, amount]
+      properties:
+        to_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        to_user_email:
+          type: string
+          format: email
+          nullable: true
+        currency:
+          $ref: "#/components/schemas/Currency"
+        amount:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+      oneOf:
+        - required: [to_user_id]
+        - required: [to_user_email]
+
+    ExchangeRequest:
+      type: object
+      required: [from_currency, to_currency, amount]
+      properties:
+        from_currency:
+          $ref: "#/components/schemas/Currency"
+        to_currency:
+          $ref: "#/components/schemas/Currency"
+        amount:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+
+    TransactionResponse:
+      type: object
+      required: [id, type, to_account_id, amount, currency, description, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/TransactionType"
+        from_account_id:
+          type: string
+          format: uuid
+          nullable: true
+        to_account_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+        currency:
+          $ref: "#/components/schemas/Currency"
+        exchange_rate:
+          type: number
+          format: double
+          nullable: true
+        converted_amount:
+          type: number
+          format: double
+          nullable: true
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        from_user_email:
+          type: string
+          format: email
+          nullable: true
+        to_user_email:
+          type: string
+          format: email
+          nullable: true
+
