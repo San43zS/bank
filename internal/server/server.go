@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 
+	"banking-platform/config"
 	"banking-platform/internal/handler"
 	"banking-platform/internal/middleware"
 	"banking-platform/internal/service"
@@ -21,12 +22,16 @@ type Server struct {
 }
 
 func NewServer(
+	cfg *config.Config,
 	db *storage.DB,
 	authService service.IAuthService,
 	accountService service.IAccountService,
 	transactionService service.ITransactionService,
 ) *Server {
 	router := gin.Default()
+	if cfg != nil && cfg.RateLimitEnabled {
+		router.Use(middleware.RateLimitMiddleware(cfg.RateLimitRPS, cfg.RateLimitBurst))
+	}
 
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")

@@ -70,6 +70,7 @@ func NewApp() (*App, error) {
 	cron := startConsistencyCron(cfg, logger, ledgerConsistencyService)
 
 	srv := server.NewServer(
+		cfg,
 		db,
 		authService,
 		accountService,
