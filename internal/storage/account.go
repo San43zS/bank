@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -16,12 +17,13 @@ func NewAccountRepository(db *DB) *AccountRepository {
 	return &AccountRepository{db: db}
 }
 
-func (r *AccountRepository) Create(account *model.Account) error {
+func (r *AccountRepository) Create(ctx context.Context, account *model.Account) error {
 	query := `
 		INSERT INTO accounts (id, user_id, currency, balance, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`
-	_, err := r.db.GetDB().Exec(
+	_, err := r.db.GetDB().ExecContext(
+		ctx,
 		query,
 		account.ID, account.UserID, account.Currency, account.Balance,
 		account.CreatedAt, account.UpdatedAt,
@@ -29,13 +31,13 @@ func (r *AccountRepository) Create(account *model.Account) error {
 	return err
 }
 
-func (r *AccountRepository) GetByUserID(userID uuid.UUID) ([]*model.Account, error) {
+func (r *AccountRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*model.Account, error) {
 	query := `
 		SELECT id, user_id, currency, balance, created_at, updated_at
 		FROM accounts WHERE user_id = $1 ORDER BY currency
 	`
 
-	rows, err := r.db.GetDB().Query(query, userID)
+	rows, err := r.db.GetDB().QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,13 +57,13 @@ func (r *AccountRepository) GetByUserID(userID uuid.UUID) ([]*model.Account, err
 	return accounts, rows.Err()
 }
 
-func (r *AccountRepository) GetByID(id uuid.UUID) (*model.Account, error) {
+func (r *AccountRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Account, error) {
 	account := &model.Account{}
 	query := `
 		SELECT id, user_id, currency, balance, created_at, updated_at
 		FROM accounts WHERE id = $1
 	`
-	err := r.db.GetDB().QueryRow(query, id).Scan(
+	err := r.db.GetDB().QueryRowContext(ctx, query, id).Scan(
 		&account.ID, &account.UserID, &account.Currency, &account.Balance,
 		&account.CreatedAt, &account.UpdatedAt,
 	)
@@ -74,13 +76,13 @@ func (r *AccountRepository) GetByID(id uuid.UUID) (*model.Account, error) {
 	return account, nil
 }
 
-func (r *AccountRepository) GetByUserIDAndCurrency(userID uuid.UUID, currency model.Currency) (*model.Account, error) {
+func (r *AccountRepository) GetByUserIDAndCurrency(ctx context.Context, userID uuid.UUID, currency model.Currency) (*model.Account, error) {
 	account := &model.Account{}
 	query := `
 		SELECT id, user_id, currency, balance, created_at, updated_at
 		FROM accounts WHERE user_id = $1 AND currency = $2
 	`
-	err := r.db.GetDB().QueryRow(query, userID, currency).Scan(
+	err := r.db.GetDB().QueryRowContext(ctx, query, userID, currency).Scan(
 		&account.ID, &account.UserID, &account.Currency, &account.Balance,
 		&account.CreatedAt, &account.UpdatedAt,
 	)
@@ -93,10 +95,10 @@ func (r *AccountRepository) GetByUserIDAndCurrency(userID uuid.UUID, currency mo
 	return account, nil
 }
 
-func (r *AccountRepository) FindAccountIDTx(tx *sql.Tx, userID uuid.UUID, currency model.Currency) (uuid.UUID, error) {
+func (r *AccountRepository) FindAccountIDTx(ctx context.Context, tx Tx, userID uuid.UUID, currency model.Currency) (uuid.UUID, error) {
 	var id uuid.UUID
 	query := `SELECT id FROM accounts WHERE user_id = $1 AND currency = $2`
-	err := tx.QueryRow(query, userID, currency).Scan(&id)
+	err := tx.QueryRowContext(ctx, query, userID, currency).Scan(&id)
 	if err == sql.ErrNoRows {
 		return uuid.Nil, fmt.Errorf("account not found")
 	}
@@ -106,19 +108,19 @@ func (r *AccountRepository) FindAccountIDTx(tx *sql.Tx, userID uuid.UUID, curren
 	return id, nil
 }
 
-func (r *AccountRepository) UpdateBalanceString(tx *sql.Tx, accountID uuid.UUID, newBalance string) error {
+func (r *AccountRepository) UpdateBalanceString(ctx context.Context, tx Tx, accountID uuid.UUID, newBalance string) error {
 	query := `UPDATE accounts SET balance = $1, updated_at = NOW() WHERE id = $2`
-	_, err := tx.Exec(query, newBalance, accountID)
+	_, err := tx.ExecContext(ctx, query, newBalance, accountID)
 	return err
 }
 
-func (r *AccountRepository) LockAccountForUpdate(tx *sql.Tx, accountID uuid.UUID) (*model.Account, error) {
+func (r *AccountRepository) LockAccountForUpdate(ctx context.Context, tx Tx, accountID uuid.UUID) (*model.Account, error) {
 	account := &model.Account{}
 	query := `
 		SELECT id, user_id, currency, balance, created_at, updated_at
 		FROM accounts WHERE id = $1 FOR UPDATE
 	`
-	err := tx.QueryRow(query, accountID).Scan(
+	err := tx.QueryRowContext(ctx, query, accountID).Scan(
 		&account.ID, &account.UserID, &account.Currency, &account.Balance,
 		&account.CreatedAt, &account.UpdatedAt,
 	)
@@ -131,13 +133,13 @@ func (r *AccountRepository) LockAccountForUpdate(tx *sql.Tx, accountID uuid.UUID
 	return account, nil
 }
 
-func (r *AccountRepository) LockAccount(tx *sql.Tx, userID uuid.UUID, currency model.Currency) (*model.Account, error) {
+func (r *AccountRepository) LockAccount(ctx context.Context, tx Tx, userID uuid.UUID, currency model.Currency) (*model.Account, error) {
 	account := &model.Account{}
 	query := `
 		SELECT id, user_id, currency, balance, created_at, updated_at
 		FROM accounts WHERE user_id = $1 AND currency = $2 FOR UPDATE
 	`
-	err := tx.QueryRow(query, userID, currency).Scan(
+	err := tx.QueryRowContext(ctx, query, userID, currency).Scan(
 		&account.ID, &account.UserID, &account.Currency, &account.Balance,
 		&account.CreatedAt, &account.UpdatedAt,
 	)

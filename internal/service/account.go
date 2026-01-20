@@ -12,11 +12,11 @@ import (
 )
 
 type AccountService struct {
-	accountRepo *storage.AccountRepository
+	accountRepo storage.AccountRepo
 	logger      *slog.Logger
 }
 
-func NewAccountService(accountRepo *storage.AccountRepository, logger *slog.Logger) *AccountService {
+func NewAccountService(accountRepo storage.AccountRepo, logger *slog.Logger) *AccountService {
 	return &AccountService{
 		accountRepo: accountRepo,
 		logger:      logger,
@@ -26,7 +26,7 @@ func NewAccountService(accountRepo *storage.AccountRepository, logger *slog.Logg
 func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) ([]*model.AccountResponse, error) {
 	s.logger.Info("Getting user accounts", "user_id", userID)
 
-	accounts, err := s.accountRepo.GetByUserID(userID)
+	accounts, err := s.accountRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Error("Failed to get accounts", "error", err, "user_id", userID)
 		return nil, fmt.Errorf("failed to get accounts: %w", err)
@@ -48,7 +48,7 @@ func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) 
 func (s *AccountService) GetAccountBalance(ctx context.Context, accountID uuid.UUID, userID uuid.UUID) (float64, error) {
 	s.logger.Info("Getting account balance", "account_id", accountID, "user_id", userID)
 
-	account, err := s.accountRepo.GetByID(accountID)
+	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		s.logger.Warn("Account not found", "account_id", accountID)
 		return 0, apperr.ErrAccountNotFound

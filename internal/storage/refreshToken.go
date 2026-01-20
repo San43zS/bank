@@ -18,11 +18,11 @@ func NewRefreshTokenRepository(db *DB) *RefreshTokenRepository {
 }
 
 type RefreshToken struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	TokenHash  string
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
 func (r *RefreshTokenRepository) Create(ctx context.Context, token *RefreshToken) error {
@@ -42,7 +42,7 @@ func (r *RefreshTokenRepository) GetByTokenHash(ctx context.Context, tokenHash s
 		FROM refresh_tokens
 		WHERE token_hash = $1 AND expires_at > NOW()
 	`
-	
+
 	err := r.db.GetDB().QueryRowContext(ctx, query, tokenHash).Scan(
 		&token.ID, &token.UserID, &token.TokenHash, &token.ExpiresAt, &token.CreatedAt,
 	)

@@ -49,6 +49,7 @@ The service reads configuration from environment variables (optionally from a lo
 - `RATE_LIMIT_ENABLED` (default: `false`)
 - `RATE_LIMIT_RPS` (default: `10`)
 - `RATE_LIMIT_BURST` (default: `20`)
+- `EXCHANGE_RATE_USD_TO_EUR` (default: `0.92`)
 
 ## Migrations
 

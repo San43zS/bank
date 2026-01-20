@@ -45,6 +45,7 @@ services:
       CONSISTENCY_CRON_ENABLED: "false"
       CONSISTENCY_CRON_INTERVAL_SECONDS: "300"
       CONSISTENCY_CRON_TIMEOUT_SECONDS: "30"
+      EXCHANGE_RATE_USD_TO_EUR: "0.92"
     ports:
       - "8080:8080"
     depends_on:

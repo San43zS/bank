@@ -29,8 +29,8 @@ type Transaction struct {
 type TransferRequest struct {
 	ToUserID    *uuid.UUID `json:"to_user_id,omitempty"`
 	ToUserEmail *string    `json:"to_user_email,omitempty"`
-	Currency Currency  `json:"currency" binding:"required,oneof=USD EUR"`
-	Amount   float64   `json:"amount" binding:"required,gt=0"`
+	Currency    Currency   `json:"currency" binding:"required,oneof=USD EUR"`
+	Amount      float64    `json:"amount" binding:"required,gt=0"`
 }
 
 type ExchangeRequest struct {

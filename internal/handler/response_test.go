@@ -125,4 +125,3 @@ func TestRespondWithBindError(t *testing.T) {
 		})
 	}
 }
-

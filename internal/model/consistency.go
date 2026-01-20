@@ -10,4 +10,3 @@ type AccountBalanceMismatch struct {
 	LedgerSum float64   `json:"ledger_sum"`
 	Diff      float64   `json:"diff"`
 }
-

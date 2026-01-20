@@ -25,6 +25,8 @@ type Config struct {
 	RateLimitEnabled bool
 	RateLimitRPS     int
 	RateLimitBurst   int
+
+	ExchangeRateUSDtoEUR string
 }
 
 func Load() (*Config, error) {
@@ -46,6 +48,8 @@ func Load() (*Config, error) {
 		RateLimitEnabled: getEnvBool("RATE_LIMIT_ENABLED", false),
 		RateLimitRPS:     getEnvInt("RATE_LIMIT_RPS", 10),
 		RateLimitBurst:   getEnvInt("RATE_LIMIT_BURST", 20),
+
+		ExchangeRateUSDtoEUR: getEnv("EXCHANGE_RATE_USD_TO_EUR", "0.92"),
 	}
 
 	if config.JWTSecret == "bank" {

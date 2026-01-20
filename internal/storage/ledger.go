@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"banking-platform/internal/model"
@@ -17,25 +16,26 @@ func NewLedgerRepository(db *DB) *LedgerRepository {
 	return &LedgerRepository{db: db}
 }
 
-func (r *LedgerRepository) CreateEntry(tx *sql.Tx, entry *model.LedgerEntry) error {
+func (r *LedgerRepository) CreateEntry(ctx context.Context, tx Tx, entry *model.LedgerEntry) error {
 	query := `
 		INSERT INTO ledger (id, transaction_id, account_id, amount, created_at)
 		VALUES ($1, $2, $3, $4, $5)
 	`
-	_, err := tx.Exec(
+	_, err := tx.ExecContext(
+		ctx,
 		query,
 		entry.ID, entry.TransactionID, entry.AccountID, entry.Amount, entry.CreatedAt,
 	)
 	return err
 }
 
-func (r *LedgerRepository) GetByTransactionID(transactionID uuid.UUID) ([]*model.LedgerEntry, error) {
+func (r *LedgerRepository) GetByTransactionID(ctx context.Context, transactionID uuid.UUID) ([]*model.LedgerEntry, error) {
 	query := `
 		SELECT id, transaction_id, account_id, amount, created_at
 		FROM ledger WHERE transaction_id = $1 ORDER BY created_at
 	`
 
-	rows, err := r.db.GetDB().Query(query, transactionID)
+	rows, err := r.db.GetDB().QueryContext(ctx, query, transactionID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,10 +54,10 @@ func (r *LedgerRepository) GetByTransactionID(transactionID uuid.UUID) ([]*model
 	return entries, rows.Err()
 }
 
-func (r *LedgerRepository) VerifyTransactionBalanceTx(tx *sql.Tx, transactionID uuid.UUID) error {
+func (r *LedgerRepository) VerifyTransactionBalanceTx(ctx context.Context, tx Tx, transactionID uuid.UUID) error {
 	query := `SELECT COALESCE(SUM(amount), 0) FROM ledger WHERE transaction_id = $1`
 	var sum float64
-	if err := tx.QueryRow(query, transactionID).Scan(&sum); err != nil {
+	if err := tx.QueryRowContext(ctx, query, transactionID).Scan(&sum); err != nil {
 		return err
 	}
 

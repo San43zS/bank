@@ -9,11 +9,11 @@ import (
 )
 
 type LedgerConsistencyService struct {
-	ledgerRepo *storage.LedgerRepository
+	ledgerRepo storage.LedgerRepo
 	logger     *slog.Logger
 }
 
-func NewLedgerConsistencyService(ledgerRepo *storage.LedgerRepository, logger *slog.Logger) *LedgerConsistencyService {
+func NewLedgerConsistencyService(ledgerRepo storage.LedgerRepo, logger *slog.Logger) *LedgerConsistencyService {
 	return &LedgerConsistencyService{
 		ledgerRepo: ledgerRepo,
 		logger:     logger,

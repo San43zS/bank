@@ -1,11 +1,12 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
-	"github.com/google/uuid"
 	"banking-platform/internal/model"
+	"github.com/google/uuid"
 )
 
 type TransactionRepository struct {
@@ -16,12 +17,13 @@ func NewTransactionRepository(db *DB) *TransactionRepository {
 	return &TransactionRepository{db: db}
 }
 
-func (r *TransactionRepository) Create(tx *sql.Tx, transaction *model.Transaction) error {
+func (r *TransactionRepository) Create(ctx context.Context, tx Tx, transaction *model.Transaction) error {
 	query := `
 		INSERT INTO transactions (id, type, from_account_id, to_account_id, amount, currency, exchange_rate, converted_amount, description, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
-	_, err := tx.Exec(
+	_, err := tx.ExecContext(
+		ctx,
 		query,
 		transaction.ID, transaction.Type, transaction.FromAccountID, transaction.ToAccountID,
 		transaction.Amount, transaction.Currency, transaction.ExchangeRate,
@@ -30,7 +32,7 @@ func (r *TransactionRepository) Create(tx *sql.Tx, transaction *model.Transactio
 	return err
 }
 
-func (r *TransactionRepository) GetByUserID(userID uuid.UUID, filter *model.TransactionFilter) ([]*model.TransactionResponse, error) {
+func (r *TransactionRepository) GetByUserID(ctx context.Context, userID uuid.UUID, filter *model.TransactionFilter) ([]*model.TransactionResponse, error) {
 	query := `
 		SELECT 
 			t.id, t.type, t.from_account_id, t.to_account_id, t.amount, t.currency,
@@ -44,7 +46,7 @@ func (r *TransactionRepository) GetByUserID(userID uuid.UUID, filter *model.Tran
 		JOIN users to_user ON to_acc.user_id = to_user.id
 		WHERE (from_acc.user_id = $1 OR to_acc.user_id = $1)
 	`
-	
+
 	args := []interface{}{userID}
 	argIndex := 2
 
@@ -67,7 +69,7 @@ func (r *TransactionRepository) GetByUserID(userID uuid.UUID, filter *model.Tran
 		}
 	}
 
-	rows, err := r.db.GetDB().Query(query, args...)
+	rows, err := r.db.GetDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +79,7 @@ func (r *TransactionRepository) GetByUserID(userID uuid.UUID, filter *model.Tran
 	for rows.Next() {
 		t := &model.TransactionResponse{}
 		var fromUserEmail, toUserEmail sql.NullString
-		
+
 		if err := rows.Scan(
 			&t.ID, &t.Type, &t.FromAccountID, &t.ToAccountID, &t.Amount, &t.Currency,
 			&t.ExchangeRate, &t.ConvertedAmount, &t.Description, &t.CreatedAt,
@@ -85,28 +87,28 @@ func (r *TransactionRepository) GetByUserID(userID uuid.UUID, filter *model.Tran
 		); err != nil {
 			return nil, err
 		}
-		
+
 		if fromUserEmail.Valid {
 			t.FromUserEmail = &fromUserEmail.String
 		}
 		if toUserEmail.Valid {
 			t.ToUserEmail = &toUserEmail.String
 		}
-		
+
 		transactions = append(transactions, t)
 	}
 	return transactions, rows.Err()
 }
 
-func (r *TransactionRepository) GetByID(id uuid.UUID) (*model.Transaction, error) {
+func (r *TransactionRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.Transaction, error) {
 	transaction := &model.Transaction{}
 	query := `
 		SELECT id, type, from_account_id, to_account_id, amount, currency, exchange_rate, converted_amount, description, created_at
 		FROM transactions WHERE id = $1
 	`
-	
+
 	var fromAccountID sql.NullString
-	err := r.db.GetDB().QueryRow(query, id).Scan(
+	err := r.db.GetDB().QueryRowContext(ctx, query, id).Scan(
 		&transaction.ID, &transaction.Type, &fromAccountID, &transaction.ToAccountID,
 		&transaction.Amount, &transaction.Currency, &transaction.ExchangeRate,
 		&transaction.ConvertedAmount, &transaction.Description, &transaction.CreatedAt,
@@ -117,11 +119,11 @@ func (r *TransactionRepository) GetByID(id uuid.UUID) (*model.Transaction, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if fromAccountID.Valid {
 		parsedID, _ := uuid.Parse(fromAccountID.String)
 		transaction.FromAccountID = &parsedID
 	}
-	
+
 	return transaction, nil
 }

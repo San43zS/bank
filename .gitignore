@@ -30,6 +30,9 @@ go.work
 *.swo
 *~
 
+# Temporary files created during safe writes/formatting
+*.go.[0-9]*
+
 # Database
 pgdata/
 *.db

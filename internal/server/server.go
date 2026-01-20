@@ -28,7 +28,8 @@ func NewServer(
 	accountService service.IAccountService,
 	transactionService service.ITransactionService,
 ) *Server {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery())
 	if cfg != nil && cfg.RateLimitEnabled {
 		router.Use(middleware.RateLimitMiddleware(cfg.RateLimitRPS, cfg.RateLimitBurst))
 	}

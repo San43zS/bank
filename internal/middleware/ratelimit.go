@@ -18,8 +18,8 @@ type ipRateLimiter struct {
 	rps   float64
 	burst float64
 
-	mu       sync.Mutex
-	buckets  map[string]*tokenBucket
+	mu      sync.Mutex
+	buckets map[string]*tokenBucket
 }
 
 func newIPRateLimiter(limitPerSecond int, burst int) *ipRateLimiter {
@@ -106,4 +106,3 @@ func RateLimitMiddleware(limitPerSecond int, burst int) gin.HandlerFunc {
 		c.Next()
 	}
 }
-

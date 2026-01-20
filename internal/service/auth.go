@@ -17,18 +17,18 @@ import (
 )
 
 type AuthService struct {
-	userRepo         *storage.UserRepository
-	accountRepo      *storage.AccountRepository
-	refreshTokenRepo *storage.RefreshTokenRepository
+	userRepo         storage.UserRepo
+	accountRepo      storage.AccountRepo
+	refreshTokenRepo storage.RefreshTokenRepo
 	tokenManager     *jwt.TokenManager
 	hasher           *hash.Hasher
 	logger           *slog.Logger
 }
 
 func NewAuthService(
-	userRepo *storage.UserRepository,
-	accountRepo *storage.AccountRepository,
-	refreshTokenRepo *storage.RefreshTokenRepository,
+	userRepo storage.UserRepo,
+	accountRepo storage.AccountRepo,
+	refreshTokenRepo storage.RefreshTokenRepo,
 	tokenManager *jwt.TokenManager,
 	hasher *hash.Hasher,
 	logger *slog.Logger,
@@ -46,7 +46,7 @@ func NewAuthService(
 func (s *AuthService) Register(ctx context.Context, req *model.RegisterRequest) (*model.AuthResponse, error) {
 	s.logger.Info("Registering new user", "email", req.Email)
 
-	_, err := s.userRepo.GetByEmail(req.Email)
+	_, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err == nil {
 		s.logger.Warn("User already exists", "email", req.Email)
 		return nil, apperr.ErrUserExists
@@ -69,12 +69,12 @@ func (s *AuthService) Register(ctx context.Context, req *model.RegisterRequest) 
 		UpdatedAt: now,
 	}
 
-	if err := s.userRepo.Create(user); err != nil {
+	if err := s.userRepo.Create(ctx, user); err != nil {
 		s.logger.Error("Failed to create user", "error", err)
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	if err := s.createDefaultAccounts(user.ID); err != nil {
+	if err := s.createDefaultAccounts(ctx, user.ID); err != nil {
 		s.logger.Error("Failed to create default accounts", "error", err, "user_id", user.ID)
 		return nil, fmt.Errorf("failed to create default accounts: %w", err)
 	}
@@ -97,7 +97,7 @@ func (s *AuthService) Register(ctx context.Context, req *model.RegisterRequest) 
 func (s *AuthService) Login(ctx context.Context, req *model.LoginRequest) (*model.AuthResponse, error) {
 	s.logger.Info("User login attempt", "email", req.Email)
 
-	user, err := s.userRepo.GetByEmail(req.Email)
+	user, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		s.logger.Warn("User not found", "email", req.Email)
 		return nil, apperr.ErrInvalidCredentials
@@ -123,7 +123,7 @@ func (s *AuthService) Login(ctx context.Context, req *model.LoginRequest) (*mode
 	}, nil
 }
 
-func (s *AuthService) createDefaultAccounts(userID uuid.UUID) error {
+func (s *AuthService) createDefaultAccounts(ctx context.Context, userID uuid.UUID) error {
 	now := time.Now()
 
 	usdAccount := &model.Account{
@@ -134,7 +134,7 @@ func (s *AuthService) createDefaultAccounts(userID uuid.UUID) error {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := s.accountRepo.Create(usdAccount); err != nil {
+	if err := s.accountRepo.Create(ctx, usdAccount); err != nil {
 		s.logger.Error("Failed to create USD account", "error", err, "user_id", userID)
 		return err
 	}
@@ -147,7 +147,7 @@ func (s *AuthService) createDefaultAccounts(userID uuid.UUID) error {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := s.accountRepo.Create(eurAccount); err != nil {
+	if err := s.accountRepo.Create(ctx, eurAccount); err != nil {
 		s.logger.Error("Failed to create EUR account", "error", err, "user_id", userID)
 		return err
 	}
@@ -198,7 +198,7 @@ func (s *AuthService) ValidateToken(ctx context.Context, tokenString string) (uu
 }
 
 func (s *AuthService) GetUserByID(ctx context.Context, userID uuid.UUID) (*model.User, error) {
-	user, err := s.userRepo.GetByID(userID)
+	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		s.logger.Warn("User not found", "user_id", userID)
 		return nil, apperr.ErrUserNotFound

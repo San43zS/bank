@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 func respondWithError(c *gin.Context, message string, statusCode int) {

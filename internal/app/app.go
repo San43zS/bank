@@ -64,6 +64,7 @@ func NewApp() (*App, error) {
 		transactionRepo,
 		ledgerRepo,
 		userRepo,
+		cfg.ExchangeRateUSDtoEUR,
 		logger,
 	)
 

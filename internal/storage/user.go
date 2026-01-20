@@ -1,11 +1,12 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
-	"github.com/google/uuid"
 	"banking-platform/internal/model"
+	"github.com/google/uuid"
 )
 
 type UserRepository struct {
@@ -16,12 +17,13 @@ func NewUserRepository(db *DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
-func (r *UserRepository) Create(user *model.User) error {
+func (r *UserRepository) Create(ctx context.Context, user *model.User) error {
 	query := `
 		INSERT INTO users (id, email, password, first_name, last_name, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	_, err := r.db.GetDB().Exec(
+	_, err := r.db.GetDB().ExecContext(
+		ctx,
 		query,
 		user.ID, user.Email, user.Password, user.FirstName, user.LastName,
 		user.CreatedAt, user.UpdatedAt,
@@ -29,12 +31,12 @@ func (r *UserRepository) Create(user *model.User) error {
 	return err
 }
 
-func (r *UserRepository) GetByEmail(email string) (*model.User, error) {
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
 	user := &model.User{}
 	query := `SELECT id, email, password, first_name, last_name, created_at, updated_at
 			  FROM users WHERE email = $1`
-	
-	err := r.db.GetDB().QueryRow(query, email).Scan(
+
+	err := r.db.GetDB().QueryRowContext(ctx, query, email).Scan(
 		&user.ID, &user.Email, &user.Password, &user.FirstName,
 		&user.LastName, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -47,12 +49,12 @@ func (r *UserRepository) GetByEmail(email string) (*model.User, error) {
 	return user, nil
 }
 
-func (r *UserRepository) GetByID(id uuid.UUID) (*model.User, error) {
+func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	user := &model.User{}
 	query := `SELECT id, email, password, first_name, last_name, created_at, updated_at
 			  FROM users WHERE id = $1`
-	
-	err := r.db.GetDB().QueryRow(query, id).Scan(
+
+	err := r.db.GetDB().QueryRowContext(ctx, query, id).Scan(
 		&user.ID, &user.Email, &user.Password, &user.FirstName,
 		&user.LastName, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -65,11 +67,11 @@ func (r *UserRepository) GetByID(id uuid.UUID) (*model.User, error) {
 	return user, nil
 }
 
-func (r *UserRepository) GetAll() ([]*model.User, error) {
+func (r *UserRepository) GetAll(ctx context.Context) ([]*model.User, error) {
 	query := `SELECT id, email, password, first_name, last_name, created_at, updated_at
 			  FROM users ORDER BY created_at`
-	
-	rows, err := r.db.GetDB().Query(query)
+
+	rows, err := r.db.GetDB().QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

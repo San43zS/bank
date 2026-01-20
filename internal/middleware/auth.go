@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type userIDContextKey struct{}
+
 func AuthMiddleware(authService service.IAuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -33,7 +35,7 @@ func AuthMiddleware(authService service.IAuthService) gin.HandlerFunc {
 		}
 
 		c.Set("user_id", userID)
-		c.Set("ctx", context.WithValue(ctx, "user_id", userID))
+		c.Request = c.Request.WithContext(context.WithValue(ctx, userIDContextKey{}, userID))
 		c.Next()
 	}
 }
