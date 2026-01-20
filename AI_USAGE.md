@@ -1,6 +1,6 @@
 # AI Usage
 
-This repository was implemented primarily **manually**. I used AI only for small, non-critical assistance (test ideas / sanity checks / wording), and I did not copy-paste “core business logic” from AI.
+This repository was implemented primarily **manually**. I used AI only for small, non-critical assistance (test ideas / sanity checks / wording).
 
 ## AI interactions
 
