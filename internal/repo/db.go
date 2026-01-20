@@ -1,4 +1,4 @@
-package storage
+package repo
 
 import (
 	"database/sql"

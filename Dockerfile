@@ -20,6 +20,6 @@ CMD ["/app/banking-platform"]
 FROM alpine:3.20 AS migrator
 RUN apk add --no-cache ca-certificates
 COPY --from=build /go/bin/goose /usr/local/bin/goose
-COPY migration /migrations
+COPY migrations /migrations
 CMD ["sh", "-c", "goose -dir /migrations up"]
 

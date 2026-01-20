@@ -4,16 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-
-	"banking-platform/internal/storage"
 )
 
 type LedgerConsistencyService struct {
-	ledgerRepo storage.LedgerRepo
+	ledgerRepo LedgerRepo
 	logger     *slog.Logger
 }
 
-func NewLedgerConsistencyService(ledgerRepo storage.LedgerRepo, logger *slog.Logger) *LedgerConsistencyService {
+func NewLedgerConsistencyService(ledgerRepo LedgerRepo, logger *slog.Logger) *LedgerConsistencyService {
 	return &LedgerConsistencyService{
 		ledgerRepo: ledgerRepo,
 		logger:     logger,

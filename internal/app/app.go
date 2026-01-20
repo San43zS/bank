@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"banking-platform/config"
-	"banking-platform/internal/hash"
 	"banking-platform/internal/jwt"
+	"banking-platform/internal/repo"
 	"banking-platform/internal/server"
 	"banking-platform/internal/service"
-	"banking-platform/internal/storage"
+	"banking-platform/pkg/hash"
+	"banking-platform/pkg/logger"
 )
 
 type App struct {
@@ -20,9 +21,7 @@ type App struct {
 }
 
 func NewApp() (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger := logger.NewJSON(os.Stdout, slog.LevelInfo)
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -30,16 +29,16 @@ func NewApp() (*App, error) {
 		return nil, err
 	}
 
-	db, err := storage.NewDB(cfg.DatabaseURL())
+	db, err := repo.NewDB(cfg.DatabaseURL())
 	if err != nil {
 		return nil, err
 	}
 
-	userRepo := storage.NewUserRepository(db)
-	accountRepo := storage.NewAccountRepository(db)
-	transactionRepo := storage.NewTransactionRepository(db)
-	ledgerRepo := storage.NewLedgerRepository(db)
-	refreshTokenRepo := storage.NewRefreshTokenRepository(db)
+	userRepo := repo.NewUserRepository(db)
+	accountRepo := repo.NewAccountRepository(db)
+	transactionRepo := repo.NewTransactionRepository(db)
+	ledgerRepo := repo.NewLedgerRepository(db)
+	refreshTokenRepo := repo.NewRefreshTokenRepository(db)
 
 	ledgerConsistencyService := service.NewLedgerConsistencyService(ledgerRepo, logger)
 

@@ -1,28 +1,25 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 
-	"banking-platform/internal/apperr"
-	"banking-platform/internal/model"
-	"banking-platform/internal/service"
+	"banking-platform/internal/http/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 type AuthHandler struct {
-	authService service.IAuthService
+	authService AuthService
 }
 
-func NewAuthHandler(authService service.IAuthService) *AuthHandler {
+func NewAuthHandler(authService AuthService) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
 	}
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
-	var req model.RegisterRequest
+	var req dto.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -31,11 +28,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	ctx := c.Request.Context()
 	response, err := h.authService.Register(ctx, &req)
 	if err != nil {
-		statusCode := http.StatusBadRequest
-		if errors.Is(err, apperr.ErrUserExists) {
-			statusCode = http.StatusConflict
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -43,7 +36,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	var req model.LoginRequest
+	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -52,11 +45,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	ctx := c.Request.Context()
 	response, err := h.authService.Login(ctx, &req)
 	if err != nil {
-		statusCode := http.StatusUnauthorized
-		if errors.Is(err, apperr.ErrInvalidCredentials) {
-			statusCode = http.StatusUnauthorized
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -79,11 +68,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 	ctx := c.Request.Context()
 	user, err := h.authService.GetUserByID(ctx, userUUID)
 	if err != nil {
-		statusCode := http.StatusNotFound
-		if errors.Is(err, apperr.ErrUserNotFound) {
-			statusCode = http.StatusNotFound
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -91,7 +76,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
-	var req model.RefreshTokenRequest
+	var req dto.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -100,11 +85,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	ctx := c.Request.Context()
 	tokenPair, err := h.authService.RefreshToken(ctx, req.RefreshToken)
 	if err != nil {
-		statusCode := http.StatusUnauthorized
-		if errors.Is(err, apperr.ErrInvalidToken) {
-			statusCode = http.StatusUnauthorized
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -112,7 +93,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	var req model.LogoutRequest
+	var req dto.LogoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -120,9 +101,10 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	if err := h.authService.Logout(ctx, req.AccessToken, req.RefreshToken); err != nil {
-		respondWithError(c, err.Error(), http.StatusInternalServerError)
+		respondWithServiceError(c, err)
 		return
 	}
 
 	c.Status(http.StatusOK)
 }
+

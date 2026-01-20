@@ -18,7 +18,7 @@ func TestRespondWithBindError(t *testing.T) {
 		Email string `json:"email" binding:"required,email"`
 	}
 	type amountReq struct {
-		Amount float64 `json:"amount" binding:"required,gt=0"`
+		AmountCents int64 `json:"amount_cents" binding:"required,gt=0"`
 	}
 	type registerReq struct {
 		Email    string `json:"email" binding:"required,email"`
@@ -60,13 +60,13 @@ func TestRespondWithBindError(t *testing.T) {
 			makeErr: func() error {
 				w := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(w)
-				c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"amount":"x"}`))
+				c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"amount_cents":"x"}`))
 				c.Request.Header.Set("Content-Type", "application/json")
 				var r amountReq
 				return c.ShouldBindJSON(&r)
 			},
 			wantStatus: http.StatusBadRequest,
-			wantError:  "invalid field type: amount",
+			wantError:  "invalid field type: amount_cents",
 			wantFields: false,
 		},
 		{
@@ -125,3 +125,4 @@ func TestRespondWithBindError(t *testing.T) {
 		})
 	}
 }
+

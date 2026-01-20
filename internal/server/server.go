@@ -8,25 +8,24 @@ import (
 	"net/http"
 
 	"banking-platform/config"
-	"banking-platform/internal/handler"
-	"banking-platform/internal/middleware"
-	"banking-platform/internal/service"
-	"banking-platform/internal/storage"
+	handler "banking-platform/internal/http/handlers"
+	"banking-platform/internal/http/middleware"
+	"banking-platform/internal/repo"
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
 	router     *gin.Engine
-	db         *storage.DB
+	db         *repo.DB
 	httpServer *http.Server
 }
 
 func NewServer(
 	cfg *config.Config,
-	db *storage.DB,
-	authService service.IAuthService,
-	accountService service.IAccountService,
-	transactionService service.ITransactionService,
+	db *repo.DB,
+	authService handler.AuthService,
+	accountService handler.AccountService,
+	transactionService handler.TransactionService,
 ) *Server {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery())

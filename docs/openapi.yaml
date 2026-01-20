@@ -236,6 +236,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden (account does not belong to user)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /transactions/transfer:
     post:
@@ -256,12 +262,12 @@ paths:
                 value:
                   to_user_id: "22222222-2222-2222-2222-222222222222"
                   currency: "USD"
-                  amount: 10.25
+                  amount_cents: 1025
               byEmail:
                 value:
                   to_user_email: "user2@test.com"
                   currency: "USD"
-                  amount: 10.25
+                  amount_cents: 1025
       responses:
         "201":
           description: Created
@@ -277,7 +283,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               examples:
                 validation:
-                  value: { "error": "validation_error", "fields": [ { "field": "amount", "message": "must be greater than 0" } ] }
+                  value: { "error": "validation_error", "fields": [ { "field": "amount_cents", "message": "must be greater than 0" } ] }
                 insufficientFunds:
                   value: { "error": "insufficient funds" }
         "401":
@@ -321,6 +327,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Conflict (liquidity unavailable)
           content:
             application/json:
               schema:
@@ -514,28 +526,28 @@ components:
 
     AccountResponse:
       type: object
-      required: [id, currency, balance]
+      required: [id, currency, balance_cents]
       properties:
         id:
           type: string
           format: uuid
         currency:
           $ref: "#/components/schemas/Currency"
-        balance:
-          type: number
-          format: double
+        balance_cents:
+          type: integer
+          format: int64
 
     BalanceResponse:
       type: object
-      required: [balance]
+      required: [balance_cents]
       properties:
-        balance:
-          type: number
-          format: double
+        balance_cents:
+          type: integer
+          format: int64
 
     TransferRequest:
       type: object
-      required: [currency, amount]
+      required: [currency, amount_cents]
       properties:
         to_user_id:
           type: string
@@ -547,32 +559,30 @@ components:
           nullable: true
         currency:
           $ref: "#/components/schemas/Currency"
-        amount:
-          type: number
-          format: double
-          minimum: 0
-          exclusiveMinimum: true
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
       oneOf:
         - required: [to_user_id]
         - required: [to_user_email]
 
     ExchangeRequest:
       type: object
-      required: [from_currency, to_currency, amount]
+      required: [from_currency, to_currency, amount_cents]
       properties:
         from_currency:
           $ref: "#/components/schemas/Currency"
         to_currency:
           $ref: "#/components/schemas/Currency"
-        amount:
-          type: number
-          format: double
-          minimum: 0
-          exclusiveMinimum: true
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
 
     TransactionResponse:
       type: object
-      required: [id, type, to_account_id, amount, currency, description, created_at]
+      required: [id, type, to_account_id, amount_cents, currency, description, created_at]
       properties:
         id:
           type: string
@@ -586,18 +596,18 @@ components:
         to_account_id:
           type: string
           format: uuid
-        amount:
-          type: number
-          format: double
+        amount_cents:
+          type: integer
+          format: int64
         currency:
           $ref: "#/components/schemas/Currency"
         exchange_rate:
           type: number
           format: double
           nullable: true
-        converted_amount:
-          type: number
-          format: double
+        converted_amount_cents:
+          type: integer
+          format: int64
           nullable: true
         description:
           type: string

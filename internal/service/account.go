@@ -2,28 +2,28 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"banking-platform/internal/apperr"
-	"banking-platform/internal/model"
-	"banking-platform/internal/storage"
+	"banking-platform/internal/http/dto"
 	"github.com/google/uuid"
 )
 
 type AccountService struct {
-	accountRepo storage.AccountRepo
+	accountRepo AccountRepo
 	logger      *slog.Logger
 }
 
-func NewAccountService(accountRepo storage.AccountRepo, logger *slog.Logger) *AccountService {
+func NewAccountService(accountRepo AccountRepo, logger *slog.Logger) *AccountService {
 	return &AccountService{
 		accountRepo: accountRepo,
 		logger:      logger,
 	}
 }
 
-func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) ([]*model.AccountResponse, error) {
+func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) ([]*dto.AccountResponse, error) {
 	s.logger.Info("Getting user accounts", "user_id", userID)
 
 	accounts, err := s.accountRepo.GetByUserID(ctx, userID)
@@ -32,12 +32,12 @@ func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) 
 		return nil, fmt.Errorf("failed to get accounts: %w", err)
 	}
 
-	responses := make([]*model.AccountResponse, len(accounts))
+	responses := make([]*dto.AccountResponse, len(accounts))
 	for i, acc := range accounts {
-		responses[i] = &model.AccountResponse{
-			ID:       acc.ID,
-			Currency: acc.Currency,
-			Balance:  acc.Balance,
+		responses[i] = &dto.AccountResponse{
+			ID:           acc.ID,
+			Currency:     acc.Currency,
+			BalanceCents: acc.BalanceCents,
 		}
 	}
 
@@ -45,13 +45,16 @@ func (s *AccountService) GetUserAccounts(ctx context.Context, userID uuid.UUID) 
 	return responses, nil
 }
 
-func (s *AccountService) GetAccountBalance(ctx context.Context, accountID uuid.UUID, userID uuid.UUID) (float64, error) {
+func (s *AccountService) GetAccountBalance(ctx context.Context, accountID uuid.UUID, userID uuid.UUID) (int64, error) {
 	s.logger.Info("Getting account balance", "account_id", accountID, "user_id", userID)
 
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
-		s.logger.Warn("Account not found", "account_id", accountID)
-		return 0, apperr.ErrAccountNotFound
+		if errors.Is(err, apperr.ErrAccountNotFound) {
+			s.logger.Warn("Account not found", "account_id", accountID)
+			return 0, apperr.ErrAccountNotFound
+		}
+		return 0, fmt.Errorf("account.get_balance: get account %s: %w", accountID.String(), err)
 	}
 
 	if account.UserID != userID {
@@ -59,6 +62,6 @@ func (s *AccountService) GetAccountBalance(ctx context.Context, accountID uuid.U
 		return 0, apperr.ErrUnauthorized
 	}
 
-	s.logger.Info("Retrieved account balance", "account_id", accountID, "balance", account.Balance)
-	return account.Balance, nil
+	s.logger.Info("Retrieved account balance", "account_id", accountID, "balance_cents", account.BalanceCents)
+	return account.BalanceCents, nil
 }

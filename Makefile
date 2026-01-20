@@ -10,13 +10,13 @@ run:
 
 # Run database migrations (using goose)
 migrate-up:
-	goose -dir ./migration postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" up
+	goose -dir ./migrations postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" up
 
 migrate-down:
-	goose -dir ./migration postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" down
+	goose -dir ./migrations postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" down
 
 migrate-status:
-	goose -dir ./migration postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" status
+	goose -dir ./migrations postgres "postgres://postgres:postgres@localhost:5433/banking?sslmode=disable" status
 
 # Run tests
 test:

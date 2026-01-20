@@ -172,7 +172,7 @@ Request body (by user id):
 {
   "to_user_id": "22222222-2222-2222-2222-222222222222",
   "currency": "USD",
-  "amount": 10.25
+  "amount_cents": 1025
 }
 ```
 
@@ -182,7 +182,7 @@ Request body (by email):
 {
   "to_user_email": "user2@test.com",
   "currency": "USD",
-  "amount": 10.25
+  "amount_cents": 1025
 }
 ```
 

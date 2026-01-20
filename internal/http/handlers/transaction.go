@@ -1,23 +1,21 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"banking-platform/internal/apperr"
-	"banking-platform/internal/model"
-	"banking-platform/internal/service"
+	"banking-platform/internal/domain"
+	"banking-platform/internal/http/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 type TransactionHandler struct {
-	transactionService service.ITransactionService
+	transactionService TransactionService
 }
 
-func NewTransactionHandler(transactionService service.ITransactionService) *TransactionHandler {
+func NewTransactionHandler(transactionService TransactionService) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
 	}
@@ -36,7 +34,7 @@ func (h *TransactionHandler) Transfer(c *gin.Context) {
 		return
 	}
 
-	var req model.TransferRequest
+	var req dto.TransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -53,11 +51,7 @@ func (h *TransactionHandler) Transfer(c *gin.Context) {
 	ctx := c.Request.Context()
 	transaction, err := h.transactionService.Transfer(ctx, userUUID, &req)
 	if err != nil {
-		statusCode := http.StatusBadRequest
-		if errors.Is(err, apperr.ErrInsufficientFunds) {
-			statusCode = http.StatusBadRequest
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -77,7 +71,7 @@ func (h *TransactionHandler) Exchange(c *gin.Context) {
 		return
 	}
 
-	var req model.ExchangeRequest
+	var req dto.ExchangeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithBindError(c, err)
 		return
@@ -86,11 +80,7 @@ func (h *TransactionHandler) Exchange(c *gin.Context) {
 	ctx := c.Request.Context()
 	transaction, err := h.transactionService.Exchange(ctx, userUUID, &req)
 	if err != nil {
-		statusCode := http.StatusBadRequest
-		if errors.Is(err, apperr.ErrInsufficientFunds) {
-			statusCode = http.StatusBadRequest
-		}
-		respondWithError(c, err.Error(), statusCode)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -110,8 +100,8 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 		return
 	}
 
-	filter := &model.TransactionFilter{
-		Type: model.TransactionType(c.Query("type")),
+	filter := &dto.TransactionFilter{
+		Type: domain.TransactionType(c.Query("type")),
 	}
 
 	pageStr := c.DefaultQuery("page", "1")
@@ -133,9 +123,10 @@ func (h *TransactionHandler) GetTransactions(c *gin.Context) {
 	ctx := c.Request.Context()
 	transactions, err := h.transactionService.GetUserTransactions(ctx, userUUID, filter)
 	if err != nil {
-		respondWithError(c, err.Error(), http.StatusInternalServerError)
+		respondWithServiceError(c, err)
 		return
 	}
 
 	respondWithJSON(c, http.StatusOK, transactions)
 }
+
