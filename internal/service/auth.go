@@ -2,33 +2,35 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"banking-platform/internal/apperr"
-	"banking-platform/internal/hash"
+	"banking-platform/internal/domain"
+	"banking-platform/internal/http/dto"
 	"banking-platform/internal/jwt"
-	"banking-platform/internal/model"
-	"banking-platform/internal/storage"
+	"banking-platform/pkg/hash"
 )
 
 type AuthService struct {
-	userRepo         *storage.UserRepository
-	accountRepo      *storage.AccountRepository
-	refreshTokenRepo *storage.RefreshTokenRepository
+	userRepo         UserRepo
+	accountRepo      AccountRepo
+	refreshTokenRepo RefreshTokenRepo
 	tokenManager     *jwt.TokenManager
 	hasher           *hash.Hasher
 	logger           *slog.Logger
 }
 
 func NewAuthService(
-	userRepo *storage.UserRepository,
-	accountRepo *storage.AccountRepository,
-	refreshTokenRepo *storage.RefreshTokenRepository,
+	userRepo UserRepo,
+	accountRepo AccountRepo,
+	refreshTokenRepo RefreshTokenRepo,
 	tokenManager *jwt.TokenManager,
 	hasher *hash.Hasher,
 	logger *slog.Logger,
@@ -43,13 +45,17 @@ func NewAuthService(
 	}
 }
 
-func (s *AuthService) Register(ctx context.Context, req *model.RegisterRequest) (*model.AuthResponse, error) {
+func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.AuthResponse, error) {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	s.logger.Info("Registering new user", "email", req.Email)
 
-	_, err := s.userRepo.GetByEmail(req.Email)
+	_, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err == nil {
 		s.logger.Warn("User already exists", "email", req.Email)
 		return nil, apperr.ErrUserExists
+	}
+	if err != nil && !errors.Is(err, apperr.ErrUserNotFound) {
+		return nil, fmt.Errorf("auth.register: get user by email: %w", err)
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -59,51 +65,62 @@ func (s *AuthService) Register(ctx context.Context, req *model.RegisterRequest) 
 	}
 
 	now := time.Now()
-	user := &model.User{
-		ID:        uuid.New(),
-		Email:     req.Email,
-		Password:  string(hashedPassword),
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		CreatedAt: now,
-		UpdatedAt: now,
+	user := &domain.User{
+		ID:           uuid.New(),
+		Email:        req.Email,
+		PasswordHash: string(hashedPassword),
+		FirstName:    req.FirstName,
+		LastName:     req.LastName,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
-	if err := s.userRepo.Create(user); err != nil {
+	if err := s.userRepo.Create(ctx, user); err != nil {
 		s.logger.Error("Failed to create user", "error", err)
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, fmt.Errorf("auth.register: create user: %w", err)
 	}
 
-	if err := s.createDefaultAccounts(user.ID); err != nil {
+	if err := s.createDefaultAccounts(ctx, user.ID); err != nil {
 		s.logger.Error("Failed to create default accounts", "error", err, "user_id", user.ID)
-		return nil, fmt.Errorf("failed to create default accounts: %w", err)
+		return nil, fmt.Errorf("auth.register: create default accounts: %w", err)
 	}
 
 	tokenPair, err := s.generateTokenPair(ctx, user.ID)
 	if err != nil {
 		s.logger.Error("Failed to generate tokens", "error", err, "user_id", user.ID)
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		return nil, fmt.Errorf("auth.register: generate tokens: %w", err)
 	}
 
 	s.logger.Info("User registered successfully", "user_id", user.ID, "email", req.Email)
 
-	return &model.AuthResponse{
+	return &dto.AuthResponse{
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
-		User:         user,
+		User: &dto.UserResponse{
+			ID:        user.ID,
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
 	}, nil
 }
 
-func (s *AuthService) Login(ctx context.Context, req *model.LoginRequest) (*model.AuthResponse, error) {
+func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.AuthResponse, error) {
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	s.logger.Info("User login attempt", "email", req.Email)
 
-	user, err := s.userRepo.GetByEmail(req.Email)
+	user, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
-		s.logger.Warn("User not found", "email", req.Email)
-		return nil, apperr.ErrInvalidCredentials
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			s.logger.Warn("User not found", "email", req.Email)
+			return nil, apperr.ErrInvalidCredentials
+		}
+		return nil, fmt.Errorf("auth.login: get user by email: %w", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		s.logger.Warn("Invalid password", "email", req.Email)
 		return nil, apperr.ErrInvalidCredentials
 	}
@@ -111,43 +128,50 @@ func (s *AuthService) Login(ctx context.Context, req *model.LoginRequest) (*mode
 	tokenPair, err := s.generateTokenPair(ctx, user.ID)
 	if err != nil {
 		s.logger.Error("Failed to generate tokens", "error", err, "user_id", user.ID)
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		return nil, fmt.Errorf("auth.login: generate tokens: %w", err)
 	}
 
 	s.logger.Info("User logged in successfully", "user_id", user.ID, "email", req.Email)
 
-	return &model.AuthResponse{
+	return &dto.AuthResponse{
 		AccessToken:  tokenPair.AccessToken,
 		RefreshToken: tokenPair.RefreshToken,
-		User:         user,
+		User: &dto.UserResponse{
+			ID:        user.ID,
+			Email:     user.Email,
+			FirstName: user.FirstName,
+			LastName:  user.LastName,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
 	}, nil
 }
 
-func (s *AuthService) createDefaultAccounts(userID uuid.UUID) error {
+func (s *AuthService) createDefaultAccounts(ctx context.Context, userID uuid.UUID) error {
 	now := time.Now()
 
-	usdAccount := &model.Account{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Currency:  model.CurrencyUSD,
-		Balance:   1000.00,
-		CreatedAt: now,
-		UpdatedAt: now,
+	usdAccount := &domain.Account{
+		ID:           uuid.New(),
+		UserID:       userID,
+		Currency:     domain.CurrencyUSD,
+		BalanceCents: 1000_00,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
-	if err := s.accountRepo.Create(usdAccount); err != nil {
+	if err := s.accountRepo.Create(ctx, usdAccount); err != nil {
 		s.logger.Error("Failed to create USD account", "error", err, "user_id", userID)
 		return err
 	}
 
-	eurAccount := &model.Account{
-		ID:        uuid.New(),
-		UserID:    userID,
-		Currency:  model.CurrencyEUR,
-		Balance:   500.00,
-		CreatedAt: now,
-		UpdatedAt: now,
+	eurAccount := &domain.Account{
+		ID:           uuid.New(),
+		UserID:       userID,
+		Currency:     domain.CurrencyEUR,
+		BalanceCents: 500_00,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
-	if err := s.accountRepo.Create(eurAccount); err != nil {
+	if err := s.accountRepo.Create(ctx, eurAccount); err != nil {
 		s.logger.Error("Failed to create EUR account", "error", err, "user_id", userID)
 		return err
 	}
@@ -156,20 +180,20 @@ func (s *AuthService) createDefaultAccounts(userID uuid.UUID) error {
 	return nil
 }
 
-func (s *AuthService) generateTokenPair(ctx context.Context, userID uuid.UUID) (*model.TokenResponse, error) {
+func (s *AuthService) generateTokenPair(ctx context.Context, userID uuid.UUID) (*dto.TokenResponse, error) {
 	accessToken, err := s.tokenManager.GenerateAccessToken(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate access token: %w", err)
+		return nil, fmt.Errorf("auth.generate_token_pair: generate access token: %w", err)
 	}
 
 	refreshToken, err := s.tokenManager.GenerateRefreshToken(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
+		return nil, fmt.Errorf("auth.generate_token_pair: generate refresh token: %w", err)
 	}
 
 	tokenHash := s.hasher.SHA256Hex(refreshToken)
 
-	refreshTokenRecord := &storage.RefreshToken{
+	refreshTokenRecord := &RefreshToken{
 		ID:        uuid.New(),
 		UserID:    userID,
 		TokenHash: tokenHash,
@@ -178,10 +202,10 @@ func (s *AuthService) generateTokenPair(ctx context.Context, userID uuid.UUID) (
 	}
 
 	if err := s.refreshTokenRepo.Create(ctx, refreshTokenRecord); err != nil {
-		return nil, fmt.Errorf("failed to store refresh token: %w", err)
+		return nil, fmt.Errorf("auth.generate_token_pair: store refresh token: %w", err)
 	}
 
-	return &model.TokenResponse{
+	return &dto.TokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	}, nil
@@ -197,24 +221,37 @@ func (s *AuthService) ValidateToken(ctx context.Context, tokenString string) (uu
 	return claims.UserID, nil
 }
 
-func (s *AuthService) GetUserByID(ctx context.Context, userID uuid.UUID) (*model.User, error) {
-	user, err := s.userRepo.GetByID(userID)
+func (s *AuthService) GetUserByID(ctx context.Context, userID uuid.UUID) (*dto.UserResponse, error) {
+	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		s.logger.Warn("User not found", "user_id", userID)
-		return nil, apperr.ErrUserNotFound
+		if errors.Is(err, apperr.ErrUserNotFound) {
+			s.logger.Warn("User not found", "user_id", userID)
+			return nil, apperr.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("auth.get_user_by_id: %w", err)
 	}
-	return user, nil
+	return &dto.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
 }
 
-func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*model.TokenResponse, error) {
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*dto.TokenResponse, error) {
 	s.logger.Info("Refreshing token")
 
 	tokenHash := s.hasher.SHA256Hex(refreshToken)
 
 	tokenRecord, err := s.refreshTokenRepo.GetByTokenHash(ctx, tokenHash)
 	if err != nil {
-		s.logger.Warn("Refresh token not found or expired", "error", err)
-		return nil, apperr.ErrInvalidToken
+		if errors.Is(err, apperr.ErrInvalidToken) {
+			s.logger.Warn("Refresh token not found or expired", "error", err)
+			return nil, apperr.ErrInvalidToken
+		}
+		return nil, fmt.Errorf("auth.refresh_token: get refresh token: %w", err)
 	}
 
 	if err := s.refreshTokenRepo.Delete(ctx, tokenHash); err != nil {
@@ -224,7 +261,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*m
 	tokenPair, err := s.generateTokenPair(ctx, tokenRecord.UserID)
 	if err != nil {
 		s.logger.Error("Failed to generate new tokens", "error", err, "user_id", tokenRecord.UserID)
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		return nil, fmt.Errorf("auth.refresh_token: generate tokens: %w", err)
 	}
 
 	s.logger.Info("Token refreshed successfully", "user_id", tokenRecord.UserID)

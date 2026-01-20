@@ -7,21 +7,21 @@ import (
 	"time"
 
 	"banking-platform/config"
-	"banking-platform/internal/hash"
 	"banking-platform/internal/jwt"
+	"banking-platform/internal/repo"
 	"banking-platform/internal/server"
 	"banking-platform/internal/service"
-	"banking-platform/internal/storage"
+	"banking-platform/pkg/hash"
+	"banking-platform/pkg/logger"
 )
 
 type App struct {
 	server *server.Server
+	cron   *consistencyCron
 }
 
 func NewApp() (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger := logger.NewJSON(os.Stdout, slog.LevelInfo)
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -29,16 +29,18 @@ func NewApp() (*App, error) {
 		return nil, err
 	}
 
-	db, err := storage.NewDB(cfg.DatabaseURL())
+	db, err := repo.NewDB(cfg.DatabaseURL())
 	if err != nil {
 		return nil, err
 	}
 
-	userRepo := storage.NewUserRepository(db)
-	accountRepo := storage.NewAccountRepository(db)
-	transactionRepo := storage.NewTransactionRepository(db)
-	ledgerRepo := storage.NewLedgerRepository(db)
-	refreshTokenRepo := storage.NewRefreshTokenRepository(db)
+	userRepo := repo.NewUserRepository(db)
+	accountRepo := repo.NewAccountRepository(db)
+	transactionRepo := repo.NewTransactionRepository(db)
+	ledgerRepo := repo.NewLedgerRepository(db)
+	refreshTokenRepo := repo.NewRefreshTokenRepository(db)
+
+	ledgerConsistencyService := service.NewLedgerConsistencyService(ledgerRepo, logger)
 
 	accessTokenTTL := 15 * time.Minute
 	refreshTokenTTL := 7 * 24 * time.Hour
@@ -61,10 +63,14 @@ func NewApp() (*App, error) {
 		transactionRepo,
 		ledgerRepo,
 		userRepo,
+		cfg.ExchangeRateUSDtoEUR,
 		logger,
 	)
 
+	cron := startConsistencyCron(cfg, logger, ledgerConsistencyService)
+
 	srv := server.NewServer(
+		cfg,
 		db,
 		authService,
 		accountService,
@@ -73,6 +79,7 @@ func NewApp() (*App, error) {
 
 	return &App{
 		server: srv,
+		cron:   cron,
 	}, nil
 }
 
@@ -82,12 +89,22 @@ func (a *App) Run() error {
 }
 
 func (a *App) Close() error {
+	if a.cron != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		a.cron.Stop(ctx)
+		cancel()
+	}
 	return a.server.Close()
 }
 
 func (a *App) Shutdown(ctx context.Context) error {
-	if err := a.server.Shutdown(ctx); err != nil {
-		return err
+	if a.cron != nil {
+		a.cron.Stop(ctx)
 	}
-	return a.server.Close()
+	shutdownErr := a.server.Shutdown(ctx)
+	closeErr := a.server.Close()
+	if shutdownErr != nil {
+		return shutdownErr
+	}
+	return closeErr
 }

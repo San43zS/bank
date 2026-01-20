@@ -5,388 +5,406 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"banking-platform/internal/apperr"
-	"banking-platform/internal/model"
-	"banking-platform/internal/storage"
+	"banking-platform/internal/domain"
+	"banking-platform/internal/http/dto"
 	"github.com/google/uuid"
 )
-
-const ExchangeRateUSDtoEUR = 0.92
 
 var systemBankUserID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
 type TransactionService struct {
-	db              *storage.DB
-	accountRepo     *storage.AccountRepository
-	transactionRepo *storage.TransactionRepository
-	ledgerRepo      *storage.LedgerRepository
-	userRepo        *storage.UserRepository
+	txRunner        TxRunner
+	accountRepo     AccountRepo
+	transactionRepo TransactionRepo
+	ledgerRepo      LedgerRepo
+	userRepo        UserRepo
 	logger          *slog.Logger
+
+	exchangeRateUSDtoEURNum int64
+	exchangeRateUSDtoEURDen int64
 }
+
+// Money is cents; balance changes are transactional; each transaction must be ledger-balanced.
 
 func NewTransactionService(
-	db *storage.DB,
-	accountRepo *storage.AccountRepository,
-	transactionRepo *storage.TransactionRepository,
-	ledgerRepo *storage.LedgerRepository,
-	userRepo *storage.UserRepository,
+	txRunner TxRunner,
+	accountRepo AccountRepo,
+	transactionRepo TransactionRepo,
+	ledgerRepo LedgerRepo,
+	userRepo UserRepo,
+	exchangeRateUSDtoEUR string,
 	logger *slog.Logger,
 ) *TransactionService {
+	num, den := parseRateToFraction(exchangeRateUSDtoEUR)
 	return &TransactionService{
-		db:              db,
-		accountRepo:     accountRepo,
-		transactionRepo: transactionRepo,
-		ledgerRepo:      ledgerRepo,
-		userRepo:        userRepo,
-		logger:          logger,
+		txRunner:                txRunner,
+		accountRepo:             accountRepo,
+		transactionRepo:         transactionRepo,
+		ledgerRepo:              ledgerRepo,
+		userRepo:                userRepo,
+		logger:                  logger,
+		exchangeRateUSDtoEURNum: num,
+		exchangeRateUSDtoEURDen: den,
 	}
 }
 
-func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID, req *model.TransferRequest) (*model.TransactionResponse, error) {
-	s.logger.Info("Processing transfer", "from_user_id", fromUserID, "to_user_id", req.ToUserID, "amount", req.Amount, "currency", req.Currency)
-
-	if req.Currency != model.CurrencyUSD && req.Currency != model.CurrencyEUR {
-		s.logger.Warn("Invalid currency", "currency", req.Currency)
-		return nil, fmt.Errorf("invalid currency: %s", req.Currency)
+func (s *TransactionService) Transfer(ctx context.Context, fromUserID uuid.UUID, req *dto.TransferRequest) (*dto.TransactionResponse, error) {
+	var toUserID uuid.UUID
+	if req.ToUserID != nil && req.ToUserEmail != nil {
+		return nil, apperr.BadRequest("provide either to_user_id or to_user_email")
 	}
-
-	amountCents, err := amountToCents(req.Amount)
-	if err != nil {
-		s.logger.Warn("Invalid amount precision", "amount", req.Amount)
-		return nil, apperr.ErrInvalidAmount
-	}
-
-	tx, err := s.db.BeginTx()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	fromAccountID, err := s.accountRepo.FindAccountIDTx(tx, fromUserID, req.Currency)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get sender account: %w", err)
-	}
-	toAccountID, err := s.accountRepo.FindAccountIDTx(tx, req.ToUserID, req.Currency)
-	if err != nil {
-		return nil, fmt.Errorf("account not found: %w", err)
-	}
-
-	lockIDs := []uuid.UUID{fromAccountID, toAccountID}
-	sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i].String() < lockIDs[j].String() })
-
-	locked := make(map[uuid.UUID]*model.Account, 2)
-	for _, id := range lockIDs {
-		acc, err := s.accountRepo.LockAccountForUpdate(tx, id)
-		if err != nil {
-			return nil, fmt.Errorf("failed to lock account: %w", err)
+	if req.ToUserID != nil {
+		toUserID = *req.ToUserID
+	} else if req.ToUserEmail != nil {
+		email := strings.ToLower(strings.TrimSpace(*req.ToUserEmail))
+		if email == "" {
+			return nil, apperr.BadRequest("to_user_email cannot be empty")
 		}
-		locked[id] = acc
+		u, err := s.userRepo.GetByEmail(ctx, email)
+		if err != nil {
+			return nil, fmt.Errorf("transaction.transfer: get recipient by email: %w", err)
+		}
+		toUserID = u.ID
+	} else {
+		return nil, apperr.BadRequest("recipient is required")
+	}
+	if toUserID == fromUserID {
+		return nil, apperr.ErrCannotTransferToSelf
 	}
 
-	fromAccount := locked[fromAccountID]
-	toAccount := locked[toAccountID]
-	if fromAccount == nil || toAccount == nil {
-		return nil, fmt.Errorf("failed to lock accounts")
+	s.logger.Info("Processing transfer", "from_user_id", fromUserID, "to_user_id", toUserID, "amount_cents", req.AmountCents, "currency", req.Currency)
+
+	if req.Currency != domain.CurrencyUSD && req.Currency != domain.CurrencyEUR {
+		s.logger.Warn("Invalid currency", "currency", req.Currency)
+		return nil, apperr.ErrInvalidCurrency
 	}
 
-	if fromAccount.UserID != fromUserID || toAccount.UserID != req.ToUserID {
-		return nil, apperr.ErrUnauthorized
+	amountCents := req.AmountCents
+
+	var created *domain.Transaction
+	var fromAccountID uuid.UUID
+	var toAccountID uuid.UUID
+	var createdAt time.Time
+
+	if err := s.txRunner.WithTx(ctx, func(tx Tx) error {
+		var err error
+
+		fromAccountID, err = s.accountRepo.FindAccountIDTx(ctx, tx, fromUserID, req.Currency)
+		if err != nil {
+			return fmt.Errorf("transaction.transfer: find sender account: %w", err)
+		}
+		toAccountID, err = s.accountRepo.FindAccountIDTx(ctx, tx, toUserID, req.Currency)
+		if err != nil {
+			return fmt.Errorf("transaction.transfer: find recipient account: %w", err)
+		}
+
+		// Lock deterministically to avoid deadlocks.
+		lockIDs := []uuid.UUID{fromAccountID, toAccountID}
+		sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i].String() < lockIDs[j].String() })
+
+		locked := make(map[uuid.UUID]*domain.Account, 2)
+		for _, id := range lockIDs {
+			acc, err := s.accountRepo.LockAccountForUpdate(ctx, tx, id)
+			if err != nil {
+				return fmt.Errorf("transaction.transfer: lock account: %w", err)
+			}
+			locked[id] = acc
+		}
+
+		fromAccount := locked[fromAccountID]
+		toAccount := locked[toAccountID]
+		if fromAccount == nil || toAccount == nil {
+			return fmt.Errorf("transaction.transfer: failed to lock accounts")
+		}
+
+		if fromAccount.UserID != fromUserID || toAccount.UserID != toUserID {
+			return apperr.ErrUnauthorized
+		}
+
+		fromBalanceCents := fromAccount.BalanceCents
+		toBalanceCents := toAccount.BalanceCents
+
+		if fromBalanceCents < amountCents {
+			s.logger.Warn("Insufficient funds", "user_id", fromUserID, "balance_cents", fromBalanceCents, "amount_cents", amountCents)
+			return apperr.ErrInsufficientFunds
+		}
+
+		transactionID := uuid.New()
+		createdAt = time.Now()
+		amountStr := domain.CentsToDecimalString(amountCents)
+		created = &domain.Transaction{
+			ID:            transactionID,
+			Type:          domain.TransactionTypeTransfer,
+			FromAccountID: &fromAccount.ID,
+			ToAccountID:   toAccount.ID,
+			AmountCents:   amountCents,
+			Currency:      req.Currency,
+			Description:   fmt.Sprintf("Transfer %s %s from %s to %s", req.Currency, amountStr, fromUserID, toUserID),
+			CreatedAt:     createdAt,
+		}
+
+		if err := s.transactionRepo.Create(ctx, tx, created); err != nil {
+			return fmt.Errorf("transaction.transfer: create transaction: %w", err)
+		}
+
+		fromEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     fromAccount.ID,
+			AmountCents:   -amountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, fromEntry); err != nil {
+			return fmt.Errorf("transaction.transfer: create ledger entry (from): %w", err)
+		}
+
+		toEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     toAccount.ID,
+			AmountCents:   amountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, toEntry); err != nil {
+			return fmt.Errorf("transaction.transfer: create ledger entry (to): %w", err)
+		}
+
+		if err := s.ledgerRepo.VerifyTransactionBalanceTx(ctx, tx, transactionID); err != nil {
+			s.logger.Error("Ledger not balanced (transfer)", "error", err, "transaction_id", transactionID)
+			return err
+		}
+
+		newFromBalanceCents := fromBalanceCents - amountCents
+		newToBalanceCents := toBalanceCents + amountCents
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, fromAccount.ID, domain.CentsToDecimalString(newFromBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.transfer: update sender balance: %w", err)
+		}
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, toAccount.ID, domain.CentsToDecimalString(newToBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.transfer: update recipient balance: %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	fromBalanceCents, err := amountToCents(fromAccount.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid sender balance in db")
-	}
-	toBalanceCents, err := amountToCents(toAccount.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid recipient balance in db")
-	}
+	s.logger.Info("Transfer completed successfully", "transaction_id", created.ID, "from_user_id", fromUserID, "to_user_id", toUserID, "amount_cents", created.AmountCents, "currency", req.Currency)
 
-	if fromBalanceCents < amountCents {
-		s.logger.Warn("Insufficient funds", "user_id", fromUserID, "balance_cents", fromBalanceCents, "amount_cents", amountCents)
-		return nil, apperr.ErrInsufficientFunds
-	}
+	fromUser, _ := s.userRepo.GetByID(ctx, fromUserID)
+	toUser, _ := s.userRepo.GetByID(ctx, toUserID)
 
-	transactionID := uuid.New()
-	now := time.Now()
-	amountFloat := centsToFloat(amountCents)
-	transaction := &model.Transaction{
-		ID:            transactionID,
-		Type:          model.TransactionTypeTransfer,
-		FromAccountID: &fromAccount.ID,
-		ToAccountID:   toAccount.ID,
-		Amount:        amountFloat,
-		Currency:      req.Currency,
-		Description:   fmt.Sprintf("Transfer %s %.2f from %s to %s", req.Currency, amountFloat, fromUserID, req.ToUserID),
-		CreatedAt:     now,
-	}
-
-	if err := s.transactionRepo.Create(tx, transaction); err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
-	}
-
-	fromEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     fromAccount.ID,
-		Amount:        -amountFloat,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, fromEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	toEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     toAccount.ID,
-		Amount:        amountFloat,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, toEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	newFromBalanceCents := fromBalanceCents - amountCents
-	newToBalanceCents := toBalanceCents + amountCents
-
-	if err := s.accountRepo.UpdateBalanceString(tx, fromAccount.ID, centsToDecimalString(newFromBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update sender balance: %w", err)
-	}
-
-	if err := s.accountRepo.UpdateBalanceString(tx, toAccount.ID, centsToDecimalString(newToBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update recipient balance: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		s.logger.Error("Failed to commit transfer transaction", "error", err, "transaction_id", transactionID)
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	s.logger.Info("Transfer completed successfully", "transaction_id", transactionID, "from_user_id", fromUserID, "to_user_id", req.ToUserID, "amount", amountFloat, "currency", req.Currency)
-
-	fromUser, _ := s.userRepo.GetByID(fromUserID)
-	toUser, _ := s.userRepo.GetByID(req.ToUserID)
-
-	response := &model.TransactionResponse{
-		ID:            transaction.ID,
-		Type:          transaction.Type,
-		FromAccountID: transaction.FromAccountID,
-		ToAccountID:   transaction.ToAccountID,
-		Amount:        transaction.Amount,
-		Currency:      transaction.Currency,
-		Description:   transaction.Description,
-		CreatedAt:     transaction.CreatedAt,
+	resp := &dto.TransactionResponse{
+		ID:            created.ID,
+		Type:          created.Type,
+		FromAccountID: created.FromAccountID,
+		ToAccountID:   created.ToAccountID,
+		AmountCents:   created.AmountCents,
+		Currency:      created.Currency,
+		Description:   created.Description,
+		CreatedAt:     createdAt,
 	}
 	if fromUser != nil {
-		response.FromUserEmail = &fromUser.Email
+		resp.FromUserEmail = &fromUser.Email
 	}
 	if toUser != nil {
-		response.ToUserEmail = &toUser.Email
+		resp.ToUserEmail = &toUser.Email
 	}
-
-	return response, nil
+	return resp, nil
 }
 
-func (s *TransactionService) Exchange(ctx context.Context, userID uuid.UUID, req *model.ExchangeRequest) (*model.TransactionResponse, error) {
-	s.logger.Info("Processing exchange", "user_id", userID, "from_currency", req.FromCurrency, "to_currency", req.ToCurrency, "amount", req.Amount)
+func (s *TransactionService) Exchange(ctx context.Context, userID uuid.UUID, req *dto.ExchangeRequest) (*dto.TransactionResponse, error) {
+	s.logger.Info("Processing exchange", "user_id", userID, "from_currency", req.FromCurrency, "to_currency", req.ToCurrency, "amount_cents", req.AmountCents)
 
 	if req.FromCurrency == req.ToCurrency {
 		s.logger.Warn("Same currency for exchange", "currency", req.FromCurrency)
-		return nil, fmt.Errorf("from and to currencies must be different")
+		return nil, apperr.ErrCurrenciesMustDiffer
 	}
 
-	amountCents, err := amountToCents(req.Amount)
-	if err != nil {
-		s.logger.Warn("Invalid amount precision", "amount", req.Amount)
-		return nil, apperr.ErrInvalidAmount
-	}
+	amountCents := req.AmountCents
 
-	exchangeRate, convertedCents, err := convertExchange(amountCents, req.FromCurrency, req.ToCurrency)
+	exchangeRate, convertedCents, err := convertExchange(amountCents, req.FromCurrency, req.ToCurrency, s.exchangeRateUSDtoEURNum, s.exchangeRateUSDtoEURDen)
 	if err != nil {
+		return nil, fmt.Errorf("transaction.exchange: convert: %w", err)
+	}
+	convertedAmountCents := convertedCents
+
+	var created *domain.Transaction
+	var createdAt time.Time
+	if err := s.txRunner.WithTx(ctx, func(tx Tx) error {
+		userFromID, err := s.accountRepo.FindAccountIDTx(ctx, tx, userID, req.FromCurrency)
+		if err != nil {
+			return fmt.Errorf("transaction.exchange: find user from account: %w", err)
+		}
+		userToID, err := s.accountRepo.FindAccountIDTx(ctx, tx, userID, req.ToCurrency)
+		if err != nil {
+			return fmt.Errorf("transaction.exchange: find user to account: %w", err)
+		}
+		bankFromID, err := s.accountRepo.FindAccountIDTx(ctx, tx, systemBankUserID, req.FromCurrency)
+		if err != nil {
+			return fmt.Errorf("transaction.exchange: find bank from account: %w", err)
+		}
+		bankToID, err := s.accountRepo.FindAccountIDTx(ctx, tx, systemBankUserID, req.ToCurrency)
+		if err != nil {
+			return fmt.Errorf("transaction.exchange: find bank to account: %w", err)
+		}
+
+		// Lock deterministically to avoid deadlocks.
+		lockIDs := []uuid.UUID{userFromID, userToID, bankFromID, bankToID}
+		sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i].String() < lockIDs[j].String() })
+
+		locked := make(map[uuid.UUID]*domain.Account, 4)
+		for _, id := range lockIDs {
+			acc, err := s.accountRepo.LockAccountForUpdate(ctx, tx, id)
+			if err != nil {
+				return fmt.Errorf("transaction.exchange: lock account: %w", err)
+			}
+			locked[id] = acc
+		}
+
+		fromAccount := locked[userFromID]
+		toAccount := locked[userToID]
+		bankFrom := locked[bankFromID]
+		bankTo := locked[bankToID]
+		if fromAccount == nil || toAccount == nil || bankFrom == nil || bankTo == nil {
+			return fmt.Errorf("transaction.exchange: failed to lock accounts")
+		}
+
+		if fromAccount.UserID != userID || toAccount.UserID != userID || bankFrom.UserID != systemBankUserID || bankTo.UserID != systemBankUserID {
+			return apperr.ErrUnauthorized
+		}
+
+		fromBalanceCents := fromAccount.BalanceCents
+		toBalanceCents := toAccount.BalanceCents
+		bankFromBalanceCents := bankFrom.BalanceCents
+		bankToBalanceCents := bankTo.BalanceCents
+
+		if fromBalanceCents < amountCents {
+			s.logger.Warn("Insufficient funds for exchange", "user_id", userID, "balance_cents", fromBalanceCents, "amount_cents", amountCents)
+			return apperr.ErrInsufficientFunds
+		}
+		if bankToBalanceCents < convertedAmountCents {
+			s.logger.Error("Bank has insufficient liquidity", "currency", req.ToCurrency, "bank_balance_cents", bankToBalanceCents, "needed_cents", convertedCents)
+			return apperr.ErrLiquidityUnavailable
+		}
+
+		transactionID := uuid.New()
+		createdAt = time.Now()
+		amountStr := domain.CentsToDecimalString(amountCents)
+		convertedStr := domain.CentsToDecimalString(convertedAmountCents)
+		created = &domain.Transaction{
+			ID:                   transactionID,
+			Type:                 domain.TransactionTypeExchange,
+			FromAccountID:        &fromAccount.ID,
+			ToAccountID:          toAccount.ID,
+			AmountCents:          amountCents,
+			Currency:             req.FromCurrency,
+			ExchangeRate:         &exchangeRate,
+			ConvertedAmountCents: &convertedAmountCents,
+			Description:          fmt.Sprintf("Exchange %s %s to %s %s", amountStr, req.FromCurrency, convertedStr, req.ToCurrency),
+			CreatedAt:            createdAt,
+		}
+
+		if err := s.transactionRepo.Create(ctx, tx, created); err != nil {
+			return fmt.Errorf("transaction.exchange: create transaction: %w", err)
+		}
+
+		fromEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     fromAccount.ID,
+			AmountCents:   -amountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, fromEntry); err != nil {
+			return fmt.Errorf("transaction.exchange: create ledger entry (user from): %w", err)
+		}
+
+		bankFromEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     bankFrom.ID,
+			AmountCents:   amountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, bankFromEntry); err != nil {
+			return fmt.Errorf("transaction.exchange: create ledger entry (bank from): %w", err)
+		}
+
+		bankToEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     bankTo.ID,
+			AmountCents:   -convertedAmountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, bankToEntry); err != nil {
+			return fmt.Errorf("transaction.exchange: create ledger entry (bank to): %w", err)
+		}
+
+		toEntry := &domain.LedgerEntry{
+			ID:            uuid.New(),
+			TransactionID: transactionID,
+			AccountID:     toAccount.ID,
+			AmountCents:   convertedAmountCents,
+			CreatedAt:     createdAt,
+		}
+		if err := s.ledgerRepo.CreateEntry(ctx, tx, toEntry); err != nil {
+			return fmt.Errorf("transaction.exchange: create ledger entry (user to): %w", err)
+		}
+
+		if err := s.ledgerRepo.VerifyTransactionBalanceTx(ctx, tx, transactionID); err != nil {
+			s.logger.Error("Ledger not balanced (exchange)", "error", err, "transaction_id", transactionID)
+			return err
+		}
+
+		newFromBalanceCents := fromBalanceCents - amountCents
+		newToBalanceCents := toBalanceCents + convertedAmountCents
+		newBankFromBalanceCents := bankFromBalanceCents + amountCents
+		newBankToBalanceCents := bankToBalanceCents - convertedAmountCents
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, fromAccount.ID, domain.CentsToDecimalString(newFromBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.exchange: update user from balance: %w", err)
+		}
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, toAccount.ID, domain.CentsToDecimalString(newToBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.exchange: update user to balance: %w", err)
+		}
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, bankFrom.ID, domain.CentsToDecimalString(newBankFromBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.exchange: update bank from balance: %w", err)
+		}
+
+		if err := s.accountRepo.UpdateBalanceString(ctx, tx, bankTo.ID, domain.CentsToDecimalString(newBankToBalanceCents)); err != nil {
+			return fmt.Errorf("transaction.exchange: update bank to balance: %w", err)
+		}
+
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	convertedAmount := centsToFloat(convertedCents)
 
-	tx, err := s.db.BeginTx()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start transaction: %w", err)
-	}
-	defer tx.Rollback()
+	s.logger.Info("Exchange completed successfully", "transaction_id", created.ID, "user_id", userID, "amount_cents", req.AmountCents, "converted_amount_cents", convertedAmountCents)
 
-	userFromID, err := s.accountRepo.FindAccountIDTx(tx, userID, req.FromCurrency)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get from account: %w", err)
-	}
-	userToID, err := s.accountRepo.FindAccountIDTx(tx, userID, req.ToCurrency)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get to account: %w", err)
-	}
-	bankFromID, err := s.accountRepo.FindAccountIDTx(tx, systemBankUserID, req.FromCurrency)
-	if err != nil {
-		return nil, fmt.Errorf("bank account not found: %w", err)
-	}
-	bankToID, err := s.accountRepo.FindAccountIDTx(tx, systemBankUserID, req.ToCurrency)
-	if err != nil {
-		return nil, fmt.Errorf("bank account not found: %w", err)
-	}
+	user, _ := s.userRepo.GetByID(ctx, userID)
 
-	lockIDs := []uuid.UUID{userFromID, userToID, bankFromID, bankToID}
-	sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i].String() < lockIDs[j].String() })
-
-	locked := make(map[uuid.UUID]*model.Account, 4)
-	for _, id := range lockIDs {
-		acc, err := s.accountRepo.LockAccountForUpdate(tx, id)
-		if err != nil {
-			return nil, fmt.Errorf("failed to lock account: %w", err)
-		}
-		locked[id] = acc
-	}
-
-	fromAccount := locked[userFromID]
-	toAccount := locked[userToID]
-	bankFrom := locked[bankFromID]
-	bankTo := locked[bankToID]
-	if fromAccount == nil || toAccount == nil || bankFrom == nil || bankTo == nil {
-		return nil, fmt.Errorf("failed to lock accounts")
-	}
-
-	if fromAccount.UserID != userID || toAccount.UserID != userID || bankFrom.UserID != systemBankUserID || bankTo.UserID != systemBankUserID {
-		return nil, apperr.ErrUnauthorized
-	}
-
-	fromBalanceCents, err := amountToCents(fromAccount.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid from balance in db")
-	}
-	toBalanceCents, err := amountToCents(toAccount.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid to balance in db")
-	}
-	bankFromBalanceCents, err := amountToCents(bankFrom.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid bank balance in db")
-	}
-	bankToBalanceCents, err := amountToCents(bankTo.Balance)
-	if err != nil {
-		return nil, fmt.Errorf("invalid bank balance in db")
-	}
-
-	if fromBalanceCents < amountCents {
-		s.logger.Warn("Insufficient funds for exchange", "user_id", userID, "balance_cents", fromBalanceCents, "amount_cents", amountCents)
-		return nil, apperr.ErrInsufficientFunds
-	}
-	if bankToBalanceCents < convertedCents {
-		s.logger.Error("Bank has insufficient liquidity", "currency", req.ToCurrency, "bank_balance_cents", bankToBalanceCents, "needed_cents", convertedCents)
-		return nil, fmt.Errorf("exchange liquidity unavailable")
-	}
-
-	transactionID := uuid.New()
-	now := time.Now()
-	amountFloat := centsToFloat(amountCents)
-	transaction := &model.Transaction{
-		ID:              transactionID,
-		Type:            model.TransactionTypeExchange,
-		FromAccountID:   &fromAccount.ID,
-		ToAccountID:     toAccount.ID,
-		Amount:          amountFloat,
-		Currency:        req.FromCurrency,
-		ExchangeRate:    &exchangeRate,
-		ConvertedAmount: &convertedAmount,
-		Description:     fmt.Sprintf("Exchange %.2f %s to %.2f %s", amountFloat, req.FromCurrency, convertedAmount, req.ToCurrency),
-		CreatedAt:       now,
-	}
-
-	if err := s.transactionRepo.Create(tx, transaction); err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
-	}
-
-	fromEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     fromAccount.ID,
-		Amount:        -amountFloat,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, fromEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	bankFromEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     bankFrom.ID,
-		Amount:        amountFloat,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, bankFromEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	bankToEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     bankTo.ID,
-		Amount:        -convertedAmount,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, bankToEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	toEntry := &model.LedgerEntry{
-		ID:            uuid.New(),
-		TransactionID: transactionID,
-		AccountID:     toAccount.ID,
-		Amount:        convertedAmount,
-		CreatedAt:     now,
-	}
-	if err := s.ledgerRepo.CreateEntry(tx, toEntry); err != nil {
-		return nil, fmt.Errorf("failed to create ledger entry: %w", err)
-	}
-
-	newFromBalanceCents := fromBalanceCents - amountCents
-	newToBalanceCents := toBalanceCents + convertedCents
-	newBankFromBalanceCents := bankFromBalanceCents + amountCents
-	newBankToBalanceCents := bankToBalanceCents - convertedCents
-
-	if err := s.accountRepo.UpdateBalanceString(tx, fromAccount.ID, centsToDecimalString(newFromBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update from account balance: %w", err)
-	}
-
-	if err := s.accountRepo.UpdateBalanceString(tx, toAccount.ID, centsToDecimalString(newToBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update to account balance: %w", err)
-	}
-
-	if err := s.accountRepo.UpdateBalanceString(tx, bankFrom.ID, centsToDecimalString(newBankFromBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update bank from balance: %w", err)
-	}
-
-	if err := s.accountRepo.UpdateBalanceString(tx, bankTo.ID, centsToDecimalString(newBankToBalanceCents)); err != nil {
-		return nil, fmt.Errorf("failed to update bank to balance: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		s.logger.Error("Failed to commit exchange transaction", "error", err, "transaction_id", transactionID)
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	s.logger.Info("Exchange completed successfully", "transaction_id", transactionID, "user_id", userID, "amount", req.Amount, "converted_amount", convertedAmount)
-
-	user, _ := s.userRepo.GetByID(userID)
-
-	response := &model.TransactionResponse{
-		ID:              transaction.ID,
-		Type:            transaction.Type,
-		FromAccountID:   transaction.FromAccountID,
-		ToAccountID:     transaction.ToAccountID,
-		Amount:          transaction.Amount,
-		Currency:        transaction.Currency,
-		ExchangeRate:    transaction.ExchangeRate,
-		ConvertedAmount: transaction.ConvertedAmount,
-		Description:     transaction.Description,
-		CreatedAt:       transaction.CreatedAt,
+	response := &dto.TransactionResponse{
+		ID:                   created.ID,
+		Type:                 created.Type,
+		FromAccountID:        created.FromAccountID,
+		ToAccountID:          created.ToAccountID,
+		AmountCents:          created.AmountCents,
+		Currency:             created.Currency,
+		ExchangeRate:         created.ExchangeRate,
+		ConvertedAmountCents: created.ConvertedAmountCents,
+		Description:          created.Description,
+		CreatedAt:            createdAt,
 	}
 	if user != nil {
 		response.FromUserEmail = &user.Email
@@ -396,50 +414,73 @@ func (s *TransactionService) Exchange(ctx context.Context, userID uuid.UUID, req
 	return response, nil
 }
 
-func (s *TransactionService) GetUserTransactions(ctx context.Context, userID uuid.UUID, filter *model.TransactionFilter) ([]*model.TransactionResponse, error) {
-	if filter.Page < 1 {
-		filter.Page = 1
+func (s *TransactionService) GetUserTransactions(ctx context.Context, userID uuid.UUID, filter *dto.TransactionFilter) ([]*dto.TransactionResponse, error) {
+	f := &domain.TransactionFilter{
+		Type:  filter.Type,
+		Page:  filter.Page,
+		Limit: filter.Limit,
 	}
-	if filter.Limit < 1 {
-		filter.Limit = 50
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.Limit < 1 {
+		f.Limit = 50
 	}
 
-	return s.transactionRepo.GetByUserID(userID, filter)
+	items, err := s.transactionRepo.GetByUserID(ctx, userID, f)
+	if err != nil {
+		return nil, fmt.Errorf("transaction.list: %w", err)
+	}
+	out := make([]*dto.TransactionResponse, 0, len(items))
+	for _, it := range items {
+		tx := it.Transaction
+		out = append(out, &dto.TransactionResponse{
+			ID:                  tx.ID,
+			Type:                tx.Type,
+			FromAccountID:        tx.FromAccountID,
+			ToAccountID:          tx.ToAccountID,
+			AmountCents:          tx.AmountCents,
+			Currency:             tx.Currency,
+			ExchangeRate:         tx.ExchangeRate,
+			ConvertedAmountCents: tx.ConvertedAmountCents,
+			Description:          tx.Description,
+			CreatedAt:            tx.CreatedAt,
+			FromUserEmail:        it.FromUserEmail,
+			ToUserEmail:          it.ToUserEmail,
+		})
+	}
+	return out, nil
 }
 
-func amountToCents(amount float64) (int64, error) {
-	cents := int64(amount*100 + 0.5)
-	if centsToFloat(cents) != float64(int64(amount*100+0.5))/100 {
+func parseRateToFraction(raw string) (int64, int64) {
+	r := strings.TrimSpace(raw)
+	if r == "" {
+		return 92, 100
 	}
-	scaled := amount * 100
-	nearest := float64(int64(scaled + 0.5))
-	if diff := scaled - nearest; diff > 1e-9 || diff < -1e-9 {
-		return 0, fmt.Errorf("amount has more than 2 decimals")
+	f, err := strconv.ParseFloat(r, 64)
+	if err != nil || f <= 0 {
+		return 92, 100
 	}
-	return cents, nil
+	scale := int64(1_000_000)
+	n := int64(f*float64(scale) + 0.5)
+	if n <= 0 {
+		return 92, 100
+	}
+	return n, scale
 }
 
-func centsToFloat(cents int64) float64 {
-	return float64(cents) / 100.0
-}
+func convertExchange(amountCents int64, from domain.Currency, to domain.Currency, rateNum int64, rateDen int64) (float64, int64, error) {
+	if rateNum <= 0 || rateDen <= 0 {
+		return 0, 0, fmt.Errorf("invalid exchange rate")
+	}
 
-func centsToDecimalString(cents int64) string {
-	sign := ""
-	if cents < 0 {
-		sign = "-"
-		cents = -cents
+	if from == domain.CurrencyUSD && to == domain.CurrencyEUR {
+		converted := (amountCents*rateNum + rateDen/2) / rateDen
+		return float64(rateNum) / float64(rateDen), converted, nil
 	}
-	return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
-}
-
-func convertExchange(amountCents int64, from model.Currency, to model.Currency) (float64, int64, error) {
-	if from == model.CurrencyUSD && to == model.CurrencyEUR {
-		converted := (amountCents*92 + 50) / 100
-		return ExchangeRateUSDtoEUR, converted, nil
+	if from == domain.CurrencyEUR && to == domain.CurrencyUSD {
+		converted := (amountCents*rateDen + rateNum/2) / rateNum
+		return float64(rateDen) / float64(rateNum), converted, nil
 	}
-	if from == model.CurrencyEUR && to == model.CurrencyUSD {
-		converted := (amountCents*100 + 46) / 92
-		return 1.0 / ExchangeRateUSDtoEUR, converted, nil
-	}
-	return 0, 0, fmt.Errorf("unsupported currency pair: %s to %s", from, to)
+	return 0, 0, apperr.ErrInvalidCurrency
 }

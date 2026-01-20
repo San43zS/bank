@@ -4,11 +4,12 @@ import (
 	"context"
 	"net/http"
 
-	"banking-platform/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
-func AuthMiddleware(authService service.IAuthService) gin.HandlerFunc {
+type userIDContextKey struct{}
+
+func AuthMiddleware(authService AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -33,7 +34,7 @@ func AuthMiddleware(authService service.IAuthService) gin.HandlerFunc {
 		}
 
 		c.Set("user_id", userID)
-		c.Set("ctx", context.WithValue(ctx, "user_id", userID))
+		c.Request = c.Request.WithContext(context.WithValue(ctx, userIDContextKey{}, userID))
 		c.Next()
 	}
 }
@@ -48,3 +49,4 @@ func extractTokenFromHeader(authHeader string) string {
 func respondWithError(c *gin.Context, message string, statusCode int) {
 	c.JSON(statusCode, gin.H{"error": message})
 }
+

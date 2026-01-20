@@ -7,26 +7,31 @@ import (
 	"log"
 	"net/http"
 
-	"banking-platform/internal/handler"
-	"banking-platform/internal/middleware"
-	"banking-platform/internal/service"
-	"banking-platform/internal/storage"
+	"banking-platform/config"
+	handler "banking-platform/internal/http/handlers"
+	"banking-platform/internal/http/middleware"
+	"banking-platform/internal/repo"
 	"github.com/gin-gonic/gin"
 )
 
 type Server struct {
 	router     *gin.Engine
-	db         *storage.DB
+	db         *repo.DB
 	httpServer *http.Server
 }
 
 func NewServer(
-	db *storage.DB,
-	authService service.IAuthService,
-	accountService service.IAccountService,
-	transactionService service.ITransactionService,
+	cfg *config.Config,
+	db *repo.DB,
+	authService handler.AuthService,
+	accountService handler.AccountService,
+	transactionService handler.TransactionService,
 ) *Server {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery())
+	if cfg != nil && cfg.RateLimitEnabled {
+		router.Use(middleware.RateLimitMiddleware(cfg.RateLimitRPS, cfg.RateLimitBurst))
+	}
 
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")

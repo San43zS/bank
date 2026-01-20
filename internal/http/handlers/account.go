@@ -3,16 +3,15 @@ package handler
 import (
 	"net/http"
 
-	"banking-platform/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
 type AccountHandler struct {
-	accountService service.IAccountService
+	accountService AccountService
 }
 
-func NewAccountHandler(accountService service.IAccountService) *AccountHandler {
+func NewAccountHandler(accountService AccountService) *AccountHandler {
 	return &AccountHandler{
 		accountService: accountService,
 	}
@@ -34,7 +33,7 @@ func (h *AccountHandler) GetAccounts(c *gin.Context) {
 	ctx := c.Request.Context()
 	accounts, err := h.accountService.GetUserAccounts(ctx, userUUID)
 	if err != nil {
-		respondWithError(c, err.Error(), http.StatusInternalServerError)
+		respondWithServiceError(c, err)
 		return
 	}
 
@@ -64,9 +63,10 @@ func (h *AccountHandler) GetBalance(c *gin.Context) {
 	ctx := c.Request.Context()
 	balance, err := h.accountService.GetAccountBalance(ctx, accountID, userUUID)
 	if err != nil {
-		respondWithError(c, err.Error(), http.StatusBadRequest)
+		respondWithServiceError(c, err)
 		return
 	}
 
-	respondWithJSON(c, http.StatusOK, gin.H{"balance": balance})
+	respondWithJSON(c, http.StatusOK, gin.H{"balance_cents": balance})
 }
+
